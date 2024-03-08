@@ -211,10 +211,9 @@ const AppGrid = (props) => {
     );
   };
 
-  const ListView = ({ hits, isHideCategoryTagChecked, isHideTagChecked }) => {
-    // isHideCategoryTagChecked = true;
-    // isHideTagChecked = true;
+  //List View Component
 
+  const ListView = ({ hits, isHideCategoryTagChecked, isHideTagChecked }) => {
     const tableDataStyle = {
       fontSize: "16px",
       borderCollapse: "collapse",
@@ -264,7 +263,7 @@ const AppGrid = (props) => {
       })(),
     };
 
-    console.log(isHideCategoryTagChecked);
+    // console.log(isHideCategoryTagChecked);
 
     const trStyle = {
       height: "40px",
@@ -291,20 +290,20 @@ const AppGrid = (props) => {
       color: "white",
     };
 
+    const listViewStyling = {
+      maxHeight: "520px",
+      width: "710px",
+      overflowY: "scroll",
+      overflowX: "hidden",
+      marginLeft: "8px",
+      justifyContent: "center",
+      scrollbarWidth: "thin",
+      scrollbarColor: "#494949 #2f2f2f",
+      marginTop: "2px",
+    };
+
     return (
-      <div
-        style={{
-          maxHeight: "520px",
-          width: "710px",
-          overflowY: "scroll",
-          overflowX: "hidden",
-          marginLeft: "8px",
-          justifyContent: "center",
-          scrollbarWidth: "thin",
-          scrollbarColor: "#494949 #2f2f2f",
-          marginTop: "2px",
-        }}
-      >
+      <div style={listViewStyling}>
         <table style={tableDataStyle}>
           <thead>
             <tr style={trStyle}>
