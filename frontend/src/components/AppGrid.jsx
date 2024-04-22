@@ -1804,18 +1804,19 @@ const AppGrid = (props) => {
   const FilterUsersAndOrgsApps = ()=>{
   
     return(
-      <div>
           <div
           style={{
-            display: "flex",
-            flexDirection: "column",
             width: 200,
-            alignItems: "flex-start",
             marginRight: 16
           }}
           >
           {isLoggedIn === true && (
-          <div>
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            width: 200,
+            alignItems: "flex-start",
+            marginRight: 16,}}>
             <Typography variant="h5" style={{marginBottom: 30, marginTop: 30, fontWeight:"400", fontSize: 24}}>
            Filter By
           </Typography>
@@ -1826,7 +1827,6 @@ const AppGrid = (props) => {
           </div>
           )} 
         </div>
-      </div>
     )
   }
 
@@ -1889,7 +1889,7 @@ const AppGrid = (props) => {
                     console.error("Error fetching user apps:", err);
                   });
         }
-      }, [currTab, isLoggedIn])
+      }, [currTab,])
 
       //Search app base on app name, category and tag
       const filteredUserAppdata = Array.isArray(userAndOrgAppData) ? userAndOrgAppData.filter((app) => {
