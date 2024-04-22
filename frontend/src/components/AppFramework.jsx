@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 import theme from '../theme.jsx';
-import CytoscapeComponent from 'react-cytoscapejs';
+// import CytoscapeComponent from 'react-cytoscapejs';
 import frameworkStyle from '../frameworkStyle.jsx';
 import { v4 as uuidv4 } from "uuid";
 
@@ -32,10 +32,10 @@ import {
 } from "@mui/icons-material";
 
 import * as edgehandles from "cytoscape-edgehandles";
-import * as cytoscape from "cytoscape";
+// import * as cytoscape from "cytoscape";
 import { toast } from 'react-toastify';
 
-cytoscape.use(edgehandles);
+// cytoscape.use(edgehandles);
 
 export const findSpecificApp = (framework, inputcategory) => {
   // Get the frameworkinfo for the org and fill in
@@ -1305,10 +1305,10 @@ const AppFramework = (props) => {
     const nodedata = event.target.data();
     	
 
-		const cytoscapeElement = document.getElementById("cytoscape_view")
-		if (cytoscapeElement !== undefined && cytoscapeElement !== null) {
-			cytoscapeElement.style.cursor = "pointer"
-		}
+		// const cytoscapeElement = document.getElementById("cytoscape_view")
+		// if (cytoscapeElement !== undefined && cytoscapeElement !== null) {
+		// 	cytoscapeElement.style.cursor = "pointer"
+		// }
 
 		var parsedStyle = {
       "border-width": "7px",
@@ -1335,10 +1335,10 @@ const AppFramework = (props) => {
     const nodedata = event.target.data();
 		//console.log("Node OUT: ", nodedata)
 		
-		const cytoscapeElement = document.getElementById("cytoscape_view")
-		if (cytoscapeElement !== undefined && cytoscapeElement !== null) {
-			cytoscapeElement.style.cursor = "default"
-		}
+		// const cytoscapeElement = document.getElementById("cytoscape_view")
+		// if (cytoscapeElement !== undefined && cytoscapeElement !== null) {
+		// 	cytoscapeElement.style.cursor = "default"
+		// }
 
 		var parsedStyle = {
       "border-width": "3px",
@@ -2305,24 +2305,6 @@ const AppFramework = (props) => {
 					</Paper>
 					: null
 			}
-			<CytoscapeComponent 
-				elements={elements} 
-				minZoom={0.35}
-				maxZoom={2.00}
-				style={{width: 560*scale, height: 560*scale, backgroundColor: theme.palette.backgroundColor, margin: "auto",}} 
-				stylesheet={frameworkStyle}
-				boxSelectionEnabled={false}
-				panningEnabled={false}
-				userPanningEnabled={false}
-				showGrid={false}
-				id="cytoscape_view"
-				cy={(incy) => {
-					// FIXME: There's something specific loading when
-					// you do the first hover of a node. Why is this different?
-					//console.log("CY: ", incy)
-					setCy(incy)
-				}}
-			/>
 			{isCloud && inputUsecase !== undefined && inputUsecase !== null && isLoggedIn === true && Object.keys(inputUsecase).length > 0 ? 
 				<Button  color="secondary" variant={"outlined"} style={{position: "absolute", bottom: -10, right: 0,}} onClick={() => {
 					setUsecaseItem(inputUsecase) 
