@@ -6794,6 +6794,7 @@ If you're interested, please let me know a time that works for you, or set up a 
             </span>
           />
           <Tab
+            disabled={userdata.admin !== "true"}
             label=<span>
               <StorageIcon style={iconStyle} /> Datastore
             </span>
