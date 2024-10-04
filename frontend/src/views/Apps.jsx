@@ -334,6 +334,11 @@ const Apps = (props) => {
     },
   });
 
+  useEffect(() => {
+	  console.log("APPVALID: ", appValidation)
+	  redirectOpenApi()
+  }, [appValidation])
+
   const getUserProfile = (username) => {
     if (serverside === true || !isCloud) {
 	  setCreatorProfile({})
@@ -955,7 +960,6 @@ const Apps = (props) => {
 					</Link>
 			: null
 
-	console.log("Sharing config: ", sharingConfiguration);
     const activateButton = 
       selectedApp.generated && !selectedApp.activated ? (
         <div>
@@ -1281,10 +1285,15 @@ const Apps = (props) => {
 		    {isCloud && !internalIds.includes(selectedApp.name.toLowerCase()) ? 
 				<Tooltip title="Deactivates this app for the current organisation. This means the app will not be usable again until you re-activate it." placement="top">
             		<Button
-            		  variant="contained"
+            		  variant={selectedApp.reference_org === userdata.active_org.id ? "outlined" : "contained"}
             		  component="label"
             		  color="primary"
             		  onClick={() => {
+						if (selectedApp.reference_org === userdata.active_org.id) {
+							toast.info("Can't deactivate apps made in this org. Please contact support if you want to deactivate this app.")
+							return
+						}
+
             		    const tmpurl = new URL(window.location.href);
             		    const searchParams = tmpurl.searchParams;
             		    const queryID = searchParams.get("queryID");
@@ -1316,7 +1325,7 @@ const Apps = (props) => {
             		      console.log("No query to handle when activating");
             		    }
 
-            		    activateApp(selectedApp.id, true)
+            		    activateApp(selectedApp.id, true, true)
             		  }}
             		  style={{ height: 35, marginTop: 0, marginLeft: 10, }}
             		>
@@ -1529,22 +1538,36 @@ const Apps = (props) => {
 
 		const [hover, setHover] = React.useState(false);
 
+		const makeFancy = text?.includes("Generate") 
+
+		var parsedStyle = {
+			flex: 1, 
+			padding: 15, 
+			margin: 10, 
+			paddingTop: 25,
+			backgroundColor: hover ? theme.palette.surfaceColor : "transparent",
+			cursor: hover ? "pointer" : "default",
+			textAlign: "center",
+			minHeight: 150, 
+			maxHeight: 150, 
+
+			borderRadius: theme.palette.borderRadius,
+		}
+
+		if (!makeFancy) { 
+			parsedStyle.border = hover ? "1px solid #f85a3e" : "1px solid rgba(255,255,255,0.3)"
+		} else {
+    		parsedStyle.border = "1px solid transparent"
+    		parsedStyle.borderImage = "linear-gradient(45deg, red, orange, yellow, green, blue, indigo, violet) 1"
+			parsedStyle.borderRadius = 0 // This doesn't work. Try to hover with a high one, and it's weird due to borderImage
+		}
+
 		return (
 			<Paper 
 				onMouseEnter={() => setHover(true)}
 				onMouseLeave={() => setHover(false)}
 				onClick={func}
-				style={{
-					flex: 1, 
-					padding: 15, 
-					margin: 10, 
-					backgroundColor: hover ? theme.palette.surfaceColor : "transparent",
-					border: hover ? "1px solid #f85a3e" : "1px solid rgba(255,255,255,0.3)",
-					cursor: hover ? "pointer" : "default",
-					textAlign: "center",
-					minHeight: 150, 
-					maxHeight: 150, 
-				}}
+				style={parsedStyle}
 			>
 				{icon} 
 				<Typography>
@@ -1565,7 +1588,7 @@ const Apps = (props) => {
 			</h2>
 			<div style={{display: "flex"}}>
 				<AppCreateButton 
-					text="Generate from OpenAPI/Swagger"
+					text="Upload OpenAPI or Swagger"
 					func={() => {
                   		setOpenApiModal(true)
 					}}
@@ -1845,9 +1868,12 @@ const Apps = (props) => {
       )
     }
 
-	const activateApp = (appid, refresh) => {
+	const activateApp = (appid, refresh, deactivate) => {
 		const appExists = userdata.active_apps !== undefined && userdata.active_apps !== null && userdata.active_apps.includes(appid)
-		const url = appExists ? `${globalUrl}/api/v1/apps/${appid}/deactivate` : `${globalUrl}/api/v1/apps/${appid}/activate`
+		const url = deactivate === true ? 
+			`${globalUrl}/api/v1/apps/${appid}/deactivate`
+			:
+			appExists ? `${globalUrl}/api/v1/apps/${appid}/deactivate` : `${globalUrl}/api/v1/apps/${appid}/activate`
 
 		fetch(url, {
 			method: 'GET',
@@ -1876,7 +1902,7 @@ const Apps = (props) => {
 				    if (appExists) {
 				        toast("App deactivated for your organization! Existing workflows with the app will continue to work.")
 				    } else {
-				        toast("App activated for your organization!")
+				        toast("App activation changed for your organization!")
 				    }
 
 					if (refresh === true) {
@@ -2021,8 +2047,6 @@ const Apps = (props) => {
                           userToken: userdata === undefined || userdata === null || userdata.id === undefined ? "unauthenticated" : userdata.id,
                         }
                       ])
-                    } else {
-                      console.log("No query to handle when activating")
                     }
 
                     activateApp(hit.objectID, true)
@@ -2556,7 +2580,8 @@ const Apps = (props) => {
 	}
 
     //fetch("http://localhost:8080/doc_to_openapi", {
-    fetch("https://doc-to-openapi-stbuwivzoq-nw.a.run.app/doc_to_openapi", {
+    //fetch("https://doc-to-openapi-stbuwivzoq-nw.a.run.app/doc_to_openapi", {
+    fetch("https://doc-to-openapi-stbuwivzoq-nw.a.run.app/api/v1/doc_to_openapi", {
       method: "POST",
       headers: {
         "Accept": "application/json",
@@ -2576,12 +2601,14 @@ const Apps = (props) => {
     })
     .then((responseJson) => {
 		// Check if openapi or swagger in string of the json
+		var parsedtext = responseJson
 		try {
-			const parsedtext = JSON.stringify(responseJson);
+			parsedtext = JSON.stringify(responseJson);
 			if (parsedtext.indexOf("openapi") === -1 && parsedtext.indexOf("swagger") === -1) {
-				setValidation(false);
-				setOpenApiError("Error in generation: "+parsedtext);
-				return;
+				setValidation(false)
+				setOpenApiError("Error in generation: "+parsedtext)
+
+				return
 			}
 		} catch (e) {
 			setValidation(false);
@@ -2590,7 +2617,7 @@ const Apps = (props) => {
 		}
 
 	    console.log("Validating response!");
-	    validateOpenApi(responseJson);
+	    validateOpenApi(parsedtext)
     })
     .catch((error) => {
       setValidation(false);
@@ -2679,10 +2706,11 @@ const Apps = (props) => {
       body: openApidata,
       credentials: "include",
     })
-      .then((response) => {
+    .then((response) => {
+
         setValidation(false);
         return response.json();
-      })
+    })
       .then((responseJson) => {
         if (responseJson.success) {
           setAppValidation(responseJson.id);
@@ -2701,8 +2729,16 @@ const Apps = (props) => {
   };
 
   const redirectOpenApi = () => {
+	if (appValidation === undefined || appValidation === null || appValidation.length === 0) {
+		return
+	}
+
+	toast.success("Successfully validated OpenAPI. Redirecting to app creation. Remember to save the app to be able to use it.", {
+		// Disable autoclose
+		autoClose: 10000,
+	})
     navigate(`/apps/new?id=${appValidation}`)
-  };
+  }
 
   const handleGithubValidation = (forceUpdate) => {
     getSpecificApps(openApi, forceUpdate);
@@ -2962,10 +2998,12 @@ const Apps = (props) => {
       }}
       PaperProps={{
         style: {
-          backgroundColor: surfaceColor,
+          backgroundColor: theme.palette.platformColor,
+		  borderRadius: theme.palette.borderRadius,
           color: "white",
           minWidth: "800px",
           minHeight: "320px",
+		  padding: 50, 
         },
       }}
     >
@@ -3004,7 +3042,7 @@ const Apps = (props) => {
                     validateDocumentationUrl();
                   }}
                 >
-                  Validate
+				  Generate
                 </Button>
               ),
             }}
@@ -3019,22 +3057,6 @@ const Apps = (props) => {
             placeholder="API Documentation URL"
             fullWidth
           />
-          <p>Or upload document with the content (coming soon)</p>
-          <input
-            hidden
-            type="file"
-            ref={upload}
-            multiple={false}
-            onChange={uploadFileDocumentation}
-          />
-          <Button
-            variant="contained"
-            color="primary"
-			disabled
-            onClick={() => upload.current.click()}
-          >
-            Upload
-          </Button>
           {errorText}
         </DialogContent>
         <DialogActions>
@@ -3053,17 +3075,6 @@ const Apps = (props) => {
           >
             Cancel
           </Button>
-          <Button
-            variant="contained"
-            style={{ borderRadius: "0px" }}
-            disabled={appValidation.length === 0}
-            onClick={() => {
-              redirectOpenApi();
-            }}
-            color="primary"
-          >
-            Continue
-          </Button>
         </DialogActions>
 	  </FormControl>
 	</Dialog>
@@ -3079,10 +3090,12 @@ const Apps = (props) => {
       }}
       PaperProps={{
         style: {
-          backgroundColor: surfaceColor,
+          backgroundColor: theme.palette.platformColor,
+		  borderRadius: theme.palette.borderRadius,
           color: "white",
           minWidth: "800px",
           minHeight: "320px",
+		  padding: 50, 
         },
       }}
     >

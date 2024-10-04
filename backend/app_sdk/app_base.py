@@ -19,7 +19,6 @@ import urllib.parse
 import jinja2 
 import datetime
 import dateutil
-
 import threading
 import concurrent.futures
 
@@ -97,6 +96,7 @@ def md5_base64(a):
     a = str(a)
     foundhash = hashlib.md5(a.encode('utf-8')).hexdigest()
     return base64.b64encode(foundhash.encode('utf-8'))
+
     
 @shuffle_filters.register
 def base64_encode(a):
@@ -106,6 +106,17 @@ def base64_encode(a):
         return base64.b64encode(a.encode('utf-8')).decode()
     except:
         return base64.b64encode(a).decode()
+
+@shuffle_filters.register
+def random_element(a):
+    # Choose a random item from an array
+    a = list(a)
+
+    if len(a) == 0:
+        return ""
+
+    return random.choice(a)
+
 
 @shuffle_filters.register
 def base64_decode(a):
@@ -274,6 +285,27 @@ def split(base, sep):
         return json.dumps(base.split(sep))
     except:
         return base.split(sep)
+
+
+@shuffle_filters.register
+def url_encode(base):
+    """url-encode a string"""
+    try:
+        from urllib import quote
+    except ImportError:
+        from urllib.parse import quote
+
+    return quote(base)
+
+@shuffle_filters.register
+def url_decode(base):
+    """url-decode a string"""
+    try:
+        from urllib import unquote_plus
+    except ImportError:
+        from urllib.parse import unquote_plus
+
+    return unquote_plus(base)
 
 
 ###
@@ -620,6 +652,7 @@ class AppBase:
 
         # I wonder if this actually works 
         url = "%s%s" % (self.base_url, stream_path)
+        self.logger.info(f"[DEBUG][%s] Sending result to %s" % (self.current_execution_id, url))
 
         try:
             log_contents = "disabled: add env SHUFFLE_LOGS_DISABLED=true to Orborus to re-enable logs for apps. Can not be enabled natively in Cloud except in Hybrid mode."
@@ -644,6 +677,14 @@ class AppBase:
         except Exception as e:
             pass
 
+        # Check if type of headers is right
+        if not isinstance(headers, dict):
+            headers = {}
+
+        if not "User-Agent" in headers:
+            headers["User-Agent"] = "Shuffle App"
+
+        self.logger.info(f"[DEBUG][{self.current_execution_id}] Starting to send result to {url}")
         try:
             finished = False
             ret = {}
@@ -652,25 +693,43 @@ class AppBase:
                 sleeptime = float(random.randint(0, 10) / 10)
 
                 try:
-                    ret = requests.post(url, headers=headers, json=action_result, timeout=10, verify=False, proxies=self.proxy_config)
+                    ret = requests.post(
+                            url, 
+                            headers=headers, 
+                            json=action_result, 
+                            timeout=10, 
+                            verify=False, 
+                            proxies=self.proxy_config,
+                    )
 
-                    #self.logger.info(f"""[DEBUG] Successful result request: Status= {ret.status_code} (break on 200/201) & Action status: {action_result["status"]}. Response= {ret.text}""")
                     if ret.status_code == 200 or ret.status_code == 201:
+                        self.logger.info(f"[DEBUG][{self.current_execution_id}] Successful send_result request: Status= {ret.status_code} & Action status: {action_result['status']}. Response= {ret.text}") 
                         finished = True
                         break
                     else:
                         # FIXME: Add a checker for 403, and Proxy logs failing
-                        self.logger.info(f"[ERROR] Bad resp ({ret.status_code}) in send_result for url '{url}'")
+                        headerauth = ""
+                        if "Authorization" in headers:
+                            headerauth = headers["Authorization"]
+
+                        try:
+                            self.logger.info(f"[ERROR] Bad resp ({ret.status_code}) in send_result for url '{url}'. Execution ID: %d, Authorization: %d, Header Auth: %d" % (len(action_result["execution_id"]), len(action_result["authorization"]), len(headerauth)))
+
+                        except Exception as e:
+                            self.logger.info(f"[ERROR] Bad resp ({ret.status_code}) in send_result for url '{url}' (no detail)") 
+
                         time.sleep(sleeptime)
             
 
                 # Proxyerrror
                 except requests.exceptions.ProxyError as e:
+                    self.logger.info(f"[ERROR][{self.current_execution_id}] Proxy error in send_result for url '{url}': {e}")
+
                     self.proxy_config = {}
                     continue
 
                 except requests.exceptions.RequestException as e:
-                    time.sleep(sleeptime)
+                    self.logger.info(f"[ERROR][{self.current_execution_id}] Request error in send_result for url '{url}': {e}")
 
                     # Check if we have a read timeout. If we do, exit as we most likely sent the result without getting a good result
                     if "Read timed out" in str(e):
@@ -683,24 +742,34 @@ class AppBase:
                         finished = True
                         break
 
+                    time.sleep(sleeptime)
+
                     #time.sleep(5)
                     continue
                 except TimeoutError as e:
+                    self.logger.info(f"[ERROR][{self.current_execution_id}] Timeout error in send_result for url '{url}': {e}")
+
                     time.sleep(sleeptime)
 
                     #time.sleep(5)
                     continue
                 except requests.exceptions.ConnectionError as e:
+                    self.logger.info(f"[ERROR][{self.current_execution_id}] Connection error in send_result for url '{url}': {e}")
+
                     time.sleep(sleeptime)
 
                     #time.sleep(5)
                     continue
                 except http.client.RemoteDisconnected as e:
+                    self.logger.info(f"[ERROR][{self.current_execution_id}] RemoteDisconnected error in send_result for url '{url}': {e}")
+
                     time.sleep(sleeptime)
 
                     #time.sleep(5)
                     continue
                 except urllib3.exceptions.ProtocolError as e:
+                    self.logger.info(f"[ERROR][{self.current_execution_id}] ProtocolError error in send_result for url '{url}': {e}")
+
                     time.sleep(0.1)
 
                     #time.sleep(5)
@@ -1189,6 +1258,7 @@ class AppBase:
             #    self.send_result(action_result, headers, stream_path)
             #    return
 
+            self.logger.info(f"[DEBUG][{self.current_execution_id}] Pre function with {len(param_multiplier)} multipliers")
             for subparams in param_multiplier:
                 #self.logger.info(f"SUBPARAMS IN MULTI: {subparams}")
                 tmp = ""
@@ -1285,6 +1355,8 @@ class AppBase:
             if len(ret) == 1:
                 #ret = ret[0]
                 self.logger.info("[DEBUG] DONT make list of 1 into 0!!")
+
+        self.logger.info(f"[DEBUG][%s] Done with execution recursion %d times" % (self.current_execution_id, len(param_multiplier)))
 
         #self.logger.info("Return from execution: %s" % ret)
         if ret == None:
@@ -1694,27 +1766,12 @@ class AppBase:
             self.send_result(self.action_result, headers, stream_path) 
             return
 
-
-        # Add async logger
-        # self.console_logger.handlers[0].stream.set_execution_id()
-
-        # FIXME: Shouldn't skip this, but it's good for minimzing API calls
-        #try:
-        #    ret = requests.post("%s%s" % (self.base_url, stream_path), headers=headers, json=action_result, verify=False)
-        #    self.logger.info("Workflow: %d" % ret.status_code)
-        #    if ret.status_code != 200:
-        #        self.logger.info(ret.text)
-        #except requests.exceptions.ConnectionError as e:
-        #    self.logger.info("Connectionerror: %s" %  e)
-
-        #    action_result["result"] = "Bad setup during startup: %s" % e 
-        #    self.send_result(action_result, headers, stream_path) 
-        #    return
-
         # Verify whether there are any parameters with ACTION_RESULT required
         # If found, we get the full results list from backend
+
+        # Forcing this to run due to potential self.full_execution loading issues in cloud run
         fullexecution = {}
-        if isinstance(self.full_execution, str) and len(self.full_execution) == 0:
+        if True or (isinstance(self.full_execution, str) and len(self.full_execution) == 0):
             #self.logger.info("[DEBUG] NO EXECUTION - LOADING!")
             try:
                 failed = False
@@ -1854,14 +1911,14 @@ class AppBase:
             """
             Generate strings contained in nested (), indexing i = level
             """
-            if len(re.findall("\(", string)) == len(re.findall("\)", string)):
+            if len(re.findall('(', string)) == len(re.findall(')', string)):
                 LeftRightIndex = [x for x in zip(
-                [Left.start()+1 for Left in re.finditer('\(', string)], 
-                reversed([Right.start() for Right in re.finditer('\)', string)]))]
+                [Left.start()+1 for Left in re.finditer('(', string)], 
+                reversed([Right.start() for Right in re.finditer(')', string)]))]
         
-            elif len(re.findall("\(", string)) > len(re.findall("\)", string)):
+            elif len(re.findall('(', string)) > len(re.findall(')', string)):
                 return parse_nested_param(string + ')', level)
-            elif len(re.findall("\(", string)) < len(re.findall("\)", string)):
+            elif len(re.findall('(', string)) < len(re.findall('"', string)):
                 return parse_nested_param('(' + string, level)
             else:
                 return 'Failed to parse params'
@@ -3050,7 +3107,7 @@ class AppBase:
                     if len(json.loads(sourcevalue)) == 0:
                         return True
                 except Exception as e:
-                    self.logger.info(f"[WARNING] Failed to check if empty as list: {e}")
+                    self.logger.info(f"[ERROR] Failed to check if empty as list: {e}")
 
                 if len(str(sourcevalue)) == 0:
                     return True
@@ -3319,7 +3376,6 @@ class AppBase:
             elif callable(func):
                 try:
                     if len(action["parameters"]) < 1:
-                        #result = await func()
                         result = func()
                     else:
                         # Potentially parse JSON here
@@ -3638,7 +3694,7 @@ class AppBase:
                         #self.logger.info()
                         
                         if not multiexecution:
-                            self.logger.info("NOT MULTI EXEC")
+                            #self.logger.info("NOT MULTI EXEC")
                             # Runs a single iteration here
                             new_params = self.validate_unique_fields(params)
                             if isinstance(new_params, list) and len(new_params) == 1:
