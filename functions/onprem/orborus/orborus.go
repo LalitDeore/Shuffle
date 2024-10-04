@@ -9,13 +9,13 @@ package main
 // Ingress network may not exist (default)
 
 import (
-	"github.com/shuffle/shuffle-shared"
-
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/shuffle/shuffle-shared"
 	"io"
 	"io/ioutil"
 	"log"
@@ -24,17 +24,20 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"math/rand"
 
 	//"os/signal"
 	//"syscall"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/swarm"
@@ -48,15 +51,11 @@ import (
 	//"github.com/mackerelio/go-osstat/memory"
 	//"github.com/shirou/gopsutil/cpu"
 
-	//k8s deps
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
-	"path/filepath"
-
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // Starts jobs in bulk, so this could be increased
@@ -77,7 +76,6 @@ var dockerSwarmBridgeInterface = os.Getenv("SHUFFLE_SWARM_BRIDGE_DEFAULT_INTERFA
 var isKubernetes = os.Getenv("IS_KUBERNETES")
 var kubernetesNamespace = os.Getenv("KUBERNETES_NAMESPACE")
 var maxCPUPercent = 90
-
 
 // var baseimagename = "docker.pkg.github.com/shuffle/shuffle"
 // var baseimagename = "ghcr.io/frikky"
@@ -104,14 +102,19 @@ var swarmConfig = os.Getenv("SHUFFLE_SWARM_CONFIG")
 var swarmNetworkName = os.Getenv("SHUFFLE_SWARM_NETWORK_NAME")
 var orborusLabel = os.Getenv("SHUFFLE_ORBORUS_LABEL")
 var memcached = os.Getenv("SHUFFLE_MEMCACHED")
-var tenzirUrl = os.Getenv("SHUFFLE_TENZIR_URL")
+
+// For it to download from Sigma? 
+var apiKey = os.Getenv("AUTH_FOR_ORBORUS") 
+var pipelineUrl = os.Getenv("SHUFFLE_PIPELINE_URL")
 
 var executionIds = []string{}
-var namespacemade = false  // For K8s
+var namespacemade = false // For K8s
 
 var dockercli *dockerclient.Client
 var containerId string
 var executionCount = 0
+
+var imagedownloadTimeout = time.Second * 300
 
 func init() {
 	var err error
@@ -180,7 +183,97 @@ func getThisContainerId() {
 	log.Printf(`[INFO] Started with containerId "%s"`, containerId)
 }
 
+func skipCheckInCleanup(name string) bool {
+	return strings.HasPrefix(name, "backend") ||
+		strings.HasPrefix(name, "shuffle-backend") ||
+		strings.HasPrefix(name, "frontend") ||
+		strings.HasPrefix(name, "shuffle-frontend") ||
+		strings.HasPrefix(name, "orborus") ||
+		strings.HasPrefix(name, "shuffle-orborus") ||
+		strings.HasPrefix(name, "opensearch") ||
+		strings.HasPrefix(name, "shuffle-opensearch") ||
+		strings.HasPrefix(name, "memcached") ||
+		strings.HasPrefix(name, "shuffle-memcached")
+}
+
 func cleanupExistingNodes(ctx context.Context) error {
+
+	if isKubernetes == "true" {
+		// of course, this doesn't clean up "nodes" but
+		// rather pods, services, roles etc.
+
+		if kubernetesNamespace == "" {
+			kubernetesNamespace = "default"
+		}
+
+		clientset, _, err := shuffle.GetKubernetesClient()
+		if err != nil {
+			log.Printf("[ERROR] Error getting kubernetes client:", err)
+			return err
+		}
+
+		// Delete all pods
+		pods, err := clientset.CoreV1().Pods(kubernetesNamespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("[ERROR] Failed listing pods: %s", err)
+			return err
+		}
+
+		for _, pod := range pods.Items {
+			// check if pod.Name starts with:
+			// "backend-", "frontend-", "orborus-", "opensearch-" or "memcached-"
+			if skipCheckInCleanup(pod.Name) {
+				continue
+			}
+
+			err := clientset.CoreV1().Pods(kubernetesNamespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
+			if err != nil {
+				log.Printf("[ERROR] Failed deleting pod %s: %s", pod.Name, err)
+			}
+		}
+
+		// Delete all services
+		services, err := clientset.CoreV1().Services(kubernetesNamespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("[ERROR] Failed listing services: %s", err)
+			return err
+		}
+
+		for _, service := range services.Items {
+			if skipCheckInCleanup(service.Name) {
+				continue
+			}
+
+			err := clientset.CoreV1().Services(kubernetesNamespace).Delete(context.Background(), service.Name, metav1.DeleteOptions{})
+			if err != nil {
+				log.Printf("[ERROR] Failed deleting service %s: %s", service.Name, err)
+			}
+		}
+
+		deployments, err := clientset.AppsV1().Deployments(kubernetesNamespace).List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			log.Printf("[ERROR] Failed listing deployments: %s", err)
+			return err
+		}
+
+		for _, deployment := range deployments.Items {
+			if skipCheckInCleanup(deployment.Name) {
+				continue
+			}
+
+			err := clientset.AppsV1().Deployments(kubernetesNamespace).Delete(context.Background(), deployment.Name, metav1.DeleteOptions{})
+			if err != nil {
+				log.Printf("[ERROR] Failed deleting deployment %s: %s", deployment.Name, err)
+			}
+		}
+
+		log.Printf("[INFO] Cleaned up all pods and services in namespace %s. Waiting 10 seconds for cleanup to reflect", kubernetesNamespace)
+
+		time.Sleep(10 * time.Second)
+
+		return nil
+	}
+
 	serviceListOptions := types.ServiceListOptions{}
 	services, err := dockercli.ServiceList(
 		context.Background(),
@@ -630,164 +723,499 @@ func buildEnvVars(envMap map[string]string) []corev1.EnvVar {
 	return envVars
 }
 
-
 func handleBackendImageDownload(ctx context.Context, images string) error {
-	// Should use docker to:
-	// 1. Pull the image & tag it 
-	// 2. Distribute the image by updating service if "run" 
+
+
+	// Replicate images with lowercase, as the name may be wrong
+	// Most of the time lowercase is correct. Swapping to have that first
+	originalImages := images
+	images = strings.ToLower(images) + "," + originalImages
+
+	// Remove the image
+	handled := []string{}
+	log.Printf("[DEBUG] Should remove existing image (s): %s. Waiting 30 seconds to ensure backend has the latest images built and ready to distribute.", images)
+	removeOptions := image.RemoveOptions{}
+
+	time.Sleep(time.Duration(30) * time.Second)
+
+	newImages := []string{}
+	for _, image := range strings.Split(images, ",") {
+		image = strings.TrimSpace(image)
+		if shuffle.ArrayContains(handled, image) {
+			continue
+		}
+
+		handled = append(handled, image)
+		if !strings.Contains(image, "/") {
+			image = fmt.Sprintf("frikky/shuffle:%s", image)
+		}
+
+		newImages = append(newImages, image)
+
+		// There is no real point in actual removal. This may however be a good idea, as Worker will force download the new one anyway
+		resp, err := dockercli.ImageRemove(ctx, image, removeOptions)
+		if err != nil {
+			log.Printf("[ERROR] Failed removing image: %s. Resp: %#v", err, resp)
+		
+			// Goroutining images that don't already exist, as they are most likely not the correct one
+			go shuffle.DownloadDockerImageBackend(&http.Client{Timeout: imagedownloadTimeout}, image)
+		} else {
+			log.Printf("[DEBUG] Removed image: %s", image)
+
+			err = shuffle.DownloadDockerImageBackend(&http.Client{Timeout: imagedownloadTimeout}, image)
+			if err != nil {
+				log.Printf("[ERROR] Failed downloading image: %s", err)
+			} else {
+				log.Printf("[DEBUG] Downloaded image: %s", image)
+				//break
+			}
+		}
+	}
+
 	if swarmConfig == "run" || swarmConfig == "swarm" {
-		log.Printf("[DEBUG] Should update service with new image after updating(s): %s. \n\nNOT IMPLEMENTED: Contact support@shuffler.io for support.\n\n", images)
+		log.Printf("[DEBUG] Should update service with new image after updating(s): %s. \n\nBETA REPLACEMENT IMPLEMENTATION: Contact support@shuffler.io for support.", strings.Join(newImages, "\n"))
 
 		// 1. Download the image
 		// 2. Find the existing service using the image
 		// 3. Update the service with the new image in a rolling restart
-	} else {
-		log.Printf("[DEBUG] Should remove existing image (s): %s", images)
 
-		// Remove the image
-		removeOptions := types.ImageRemoveOptions{
+		// Find the existing service
+		serviceListOptions := types.ServiceListOptions{}
+		services, err := dockercli.ServiceList(
+			ctx,
+			serviceListOptions,
+		)
+
+		if err != nil {
+			log.Printf("[ERROR] Failed finding containers: %s", err)
+		} else {
+			log.Printf("[DEBUG] Found %d services", len(services))
+
+			for _, service := range services {
+
+				log.Printf("Imagename: %s", service.Spec.TaskTemplate.ContainerSpec.Image)
+
+				for _, image := range newImages {
+					if !strings.Contains(service.Spec.TaskTemplate.ContainerSpec.Image, image) {
+						continue
+					}
+
+					log.Printf("[DEBUG] Found service for image %#v: %#v", service.Spec.Annotations.Name)
+
+					// Update the service to run with the new image
+					//docker service update --image username/imagename:latest servicename --force
+					serviceUpdateOptions := types.ServiceUpdateOptions{}
+					resp, err := dockercli.ServiceUpdate(
+						ctx, 
+						service.ID, 
+						service.Version, 
+						service.Spec, 
+						serviceUpdateOptions,
+					)
+
+					if err != nil {
+						log.Printf("[ERROR] Failed updating service %s with the new image %s: %s. Resp: %#v", service.Spec.Annotations.Name, image, err, resp)
+					} else {
+						log.Printf("[DEBUG] Updated service %s with the new image %s. Resp: %#v", service.Spec.Annotations.Name, image, resp)
+
+						if !strings.Contains(fmt.Sprintf("%s", resp), "error") {
+							break
+						}
+					}
+				}
+			}
+		
 		}
 
-		for _, image := range strings.Split(images, ",") {
-			image = strings.TrimSpace(image)
-			if !strings.Contains(image, "/") {
-				image = fmt.Sprintf("frikky/shuffle:%s", image)
-			}
-
-			resp, err := dockercli.ImageRemove(ctx, image, removeOptions)
-			if err != nil {
-				log.Printf("[ERROR] Failed removing image: %s", err)
-			} else {
-				log.Printf("[DEBUG] Removed image: %s", resp)
-			}
-		}
 	}
 
 	return nil
 }
 
+func fixk8sRoles() {
+	clientset, _, err := shuffle.GetKubernetesClient()
+	if err != nil {
+		log.Printf("[ERROR] Error getting kubernetes client: %s", err)
+		os.Exit(1)
+	}
+
+	kubernetesNamespace := "default"
+
+	// Check if namespace exist as variable. If so, make it
+	if len(os.Getenv("KUBERNETES_NAMESPACE")) > 0 {
+		kubernetesNamespace = os.Getenv("KUBERNETES_NAMESPACE")
+	}
+
+	// fix roles
+	// check if "service-creator" role is assigned to the service account "default"
+	// roleBindingNames := []string{"service-creator-binding", "pod-creator-binding", "deployment-creator-binding"}
+	serviceAccountName := "default"
+	roleBindingName := "creator-all"
+
+	resourceTypes := []string{"services", "pods", "deployments"}
+
+	// Check if the RoleBinding exists
+	roleBinding, err := clientset.RbacV1().RoleBindings(kubernetesNamespace).Get(context.TODO(), roleBindingName, metav1.GetOptions{})
+	if err != nil {
+		log.Printf("[WARNING] Failed to get RoleBinding %s: %s", roleBindingName, err)
+
+		// create role and rolebinding
+		role := &rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: roleBindingName,
+			},
+			Rules: []rbacv1.PolicyRule{
+				{
+					APIGroups: []string{"", "apps"},
+					Resources: resourceTypes,
+					Verbs:     []string{"create", "list"},
+				},
+			},
+		}
+
+		ctx := context.TODO()
+
+		_, err := clientset.RbacV1().Roles(kubernetesNamespace).Create(ctx, role, metav1.CreateOptions{})
+		if err != nil {
+			log.Printf("[ERROR] Failed to create Role %s: %s", roleBindingName, err)
+			if !strings.Contains(fmt.Sprintf("%s", err), "already exists") {
+				log.Printf("[INFO] role %s already exists", roleBindingName)
+			}
+		}
+
+		roleBinding := &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: roleBindingName,
+			},
+			Subjects: []rbacv1.Subject{
+				{
+					Kind:      "ServiceAccount",
+					Name:      serviceAccountName,
+					Namespace: kubernetesNamespace,
+				},
+			},
+			RoleRef: rbacv1.RoleRef{
+				Kind: "Role",
+				Name: roleBindingName,
+			},
+		}
+
+		_, err = clientset.RbacV1().RoleBindings(kubernetesNamespace).Create(ctx, roleBinding, metav1.CreateOptions{})
+		if err != nil {
+			log.Printf("[ERROR] Failed to create RoleBinding %s: %s", roleBindingName, err)
+			if strings.Contains(fmt.Sprintf("%s", err), "already exists") {
+				log.Printf("[INFO] rolebinding %s already exists", roleBindingName)
+			}
+		}
+
+		log.Printf("[INFO] Created Role %s and RoleBinding %s", roleBindingName, roleBindingName)
+	} else {
+		log.Printf("[INFO] RoleBinding %s exists", roleBindingName)
+	}
+
+	// Check if the RoleBinding is assigned to the service account
+	var found bool
+	for _, subject := range roleBinding.Subjects {
+		if subject.Kind == "ServiceAccount" && subject.Name == serviceAccountName {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		log.Printf("[WARNING] Service account %s is not assigned to RoleBinding %s\n", serviceAccountName, roleBindingName)
+		// assign the service account to the rolebinding
+		roleBinding.Subjects = append(roleBinding.Subjects, rbacv1.Subject{
+			Kind:      "ServiceAccount",
+			Name:      serviceAccountName,
+			Namespace: kubernetesNamespace,
+		})
+
+		ctx := context.TODO()
+
+		_, err := clientset.RbacV1().RoleBindings(kubernetesNamespace).Update(ctx, roleBinding, metav1.UpdateOptions{})
+		if err != nil {
+			log.Printf("[ERROR](ns - %s) Failed to update RoleBinding %s: %s", kubernetesNamespace, roleBindingName, err)
+			if !strings.Contains(fmt.Sprintf("%s", err), "already exists") {
+				log.Printf("[INFO] rolebinding %s already exists", roleBindingName)
+			}
+		}
+	}
+}
+
+func int32Ptr(i int32) *int32 { return &i }
+
+func deployK8sWorker(image string, identifier string, env []string) error {
+	env = append(env, fmt.Sprintf("IS_KUBERNETES=true"))
+	env = append(env, fmt.Sprintf("KUBERNETES_NAMESPACE=%s", os.Getenv("KUBERNETES_NAMESPACE")))
+
+	if len(os.Getenv("KUBERNETES_SERVICE_HOST")) > 0 {
+		env = append(env, fmt.Sprintf("KUBERNETES_SERVICE_HOST=%s", os.Getenv("KUBERNETES_SERVICE_HOST")))
+	}
+
+	if len(os.Getenv("SHUFFLE_MEMCACHED")) > 0 {
+		env = append(env, fmt.Sprintf("SHUFFLE_MEMCACHED=%s", os.Getenv("SHUFFLE_MEMCACHED")))
+	}
+
+	if len(os.Getenv("KUBERNETES_SERVICE_PORT")) > 0 {
+		env = append(env, fmt.Sprintf("KUBERNETES_SERVICE_PORT=%s", os.Getenv("KUBERNETES_SERVICE_PORT")))
+	}
+
+	if len(os.Getenv("REGISTRY_URL")) > 0 {
+		env = append(env, fmt.Sprintf("REGISTRY_URL=%s", os.Getenv("REGISTRY_URL")))
+	}
+
+	clientset, _, err := shuffle.GetKubernetesClient()
+	if err != nil {
+		log.Printf("[ERROR] Error getting kubernetes client:", err)
+		return err
+	}
+
+	//env = append(env, fmt.Sprintf("KUBERNETES_CONFIG=%s", config.String()))
+
+	// FIXME: When a service account is used, the account is also mounted in the pod
+	// The volume mount location is:
+	// /var/run/secrets/kubernetes.io/serviceaccount
+
+	// Look for if there is a default service account in use
+	if len(os.Getenv("KUBERNETES_SERVICE_ACCOUNT")) > 0 {
+		log.Printf("[DEBUG] Using Kubernetes service account %s", os.Getenv("KUBERNETES_SERVICE_ACCOUNT"))
+		env = append(env, fmt.Sprintf("KUBERNETES_SERVICE_ACCOUNT=%s", os.Getenv("KUBERNETES_SERVICE_ACCOUNT")))
+
+		// use k8s downward API to find it if we are in a pod
+	}
+
+	// Check if namespace exist as variable. If so, make it
+	if len(os.Getenv("KUBERNETES_NAMESPACE")) > 0 && !namespacemade {
+		kubernetesNamespace = os.Getenv("KUBERNETES_NAMESPACE")
+
+		// Make the namespace
+		namespace := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: os.Getenv("KUBERNETES_NAMESPACE"),
+			},
+		}
+
+		_, err := clientset.CoreV1().Namespaces().Create(context.Background(), namespace, metav1.CreateOptions{})
+		if err != nil {
+			if !strings.Contains(strings.ToLower(fmt.Sprintf("%s", err)), "already exists") {
+				log.Printf("[ERROR] Failed creating Kubernetes namespace: %s", err)
+			} else {
+				namespacemade = true
+			}
+		} else {
+			namespacemade = true
+		}
+	}
+
+	env = append(env, fmt.Sprintf("BASE_URL=%s", baseUrl))
+	env = append(env, fmt.Sprintf("SHUFFLE_SWARM_CONFIG=%s", swarmConfig))
+	env = append(env, fmt.Sprintf("WORKER_HOSTNAME=%s", "shuffle-workers"))
+
+	if len(kubernetesNamespace) == 0 {
+		foundNamespace, err := shuffle.GetKubernetesNamespace()
+		if err != nil {
+			//log.Printf("[ERROR] Failed getting Kubernetes namespace: %s", err)
+		}
+
+		if len(foundNamespace) > 0 {
+			kubernetesNamespace = foundNamespace
+			os.Setenv("KUBERNETES_NAMESPACE", kubernetesNamespace)
+		}
+	}
+
+	if len(kubernetesNamespace) == 0 {
+		kubernetesNamespace = "default"
+	}
+
+	kubernetesImage := os.Getenv("SHUFFLE_KUBERNETES_WORKER")
+	if len(kubernetesImage) == 0 {
+		kubernetesImage = image
+	}
+	log.Printf("[DEBUG] Using Kubernetes worker image '%s'", kubernetesImage)
+	// image = "shuffle-worker:v1" //hard coded image name to test locally
+
+	envMap := make(map[string]string)
+	for _, envStr := range env {
+		parts := strings.SplitN(envStr, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	containerLabels := map[string]string{
+		"container": "shuffle-worker",
+	}
+
+	containerAttachment := corev1.Container{
+		Name:  identifier,
+		Image: kubernetesImage,
+		Env:   buildEnvVars(envMap),
+
+		//ImagePullPolicy: "Never",
+		ImagePullPolicy: corev1.PullIfNotPresent,
+	}
+
+	podname := shuffle.GetPodName()
+
+	ctx := context.Background()
+
+	if len(podname) > 0 {
+		_, err := shuffle.GetCurrentPodNetworkConfig(ctx, clientset, kubernetesNamespace, podname)
+		if err != nil {
+			log.Printf("[ERROR] Failed getting current pod network: %s", err)
+		} else {
+			log.Printf("[DEBUG] Current pod found!")
+			// currentPodStatus = k8s.io/api/core/v1.PodStatus
+		}
+	}
+
+	// While testing:
+	// kubectl delete pods --all --all-namespaces; kubectl delete services --all --all-namespaces
+	// pod := &corev1.Pod{
+	// 	ObjectMeta: metav1.ObjectMeta{
+	// 		Name:   identifier,
+	// 		Labels: containerLabels,
+	// 	},
+	// 	Spec: corev1.PodSpec{
+	// 		RestartPolicy: "Never",
+	// 		// DNSPolicy:     "Default",
+	// 		DNSPolicy: 	corev1.DNSClusterFirst,
+	// 		// NodeSelector: map[string]string{
+	// 		// 	"node": "master",
+	// 		// },
+	// 		Containers: []corev1.Container{
+	// 			containerAttachment,
+	// 		},
+	// 	},
+	// }
+
+	// // Check if running on ARM or x86 to download the correct image
+
+	// // Get current pod's network so we can make the pod in it
+
+	// _, err = clientset.CoreV1().Pods(kubernetesNamespace).List(context.Background(), metav1.ListOptions{})
+	// if err != nil {
+	// 	log.Printf("[ERROR] Failed listing pods: %s", err)
+	// }
+
+	// createdPod, err := clientset.CoreV1().Pods(kubernetesNamespace).Create(context.Background(), pod, metav1.CreateOptions{})
+	// if err != nil {
+	// 	//log.Printf("[ERROR] Failed creating pod: %v", err)
+	// 	return err
+	// }
+
+	// log.Printf("[INFO] Created pod %q in namespace %q\n", createdPod.Name, createdPod.Namespace)
+
+	// // kubectl expose pod shuffle-workers --type=LoadBalancer --port=33333
+	// service := &corev1.Service{
+	// 	ObjectMeta: metav1.ObjectMeta{
+	// 		Name: identifier,
+	// 	},
+	// 	Spec: corev1.ServiceSpec{
+	// 		Selector: map[string]string{
+	// 			"container": "shuffle-workers",
+	// 		},
+	// 		Ports: []corev1.ServicePort{
+	// 			{
+	// 				Protocol: "TCP",
+	// 				Port:     33333,
+	// 				TargetPort: intstr.FromInt(33333),
+	// 			},
+	// 		},
+	// 		Type: corev1.ServiceTypeLoadBalancer,
+	// 	},
+	// }
+
+	// _, err = clientset.CoreV1().Services(kubernetesNamespace).Create(context.TODO(), service, metav1.CreateOptions{})
+	// if err != nil {
+	// 	log.Printf("[ERROR] Failed creating service: %v", err)
+	// 	return err
+	// }
+
+	replicaNumberStr := os.Getenv("SHUFFLE_SCALE_REPLICAS")
+	replicaNumber := 1
+	if len(replicaNumberStr) > 0 {
+		tmpInt, err := strconv.Atoi(replicaNumberStr)
+		if err != nil {
+			log.Printf("[ERROR] %s is not a valid number for replication", replicaNumberStr)
+		} else {
+			replicaNumber = tmpInt
+
+		}
+	}
+
+	replicaNumberInt32 := int32(replicaNumber)
+
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: identifier,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: int32Ptr(replicaNumberInt32),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: containerLabels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: containerLabels,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						containerAttachment,
+					},
+					DNSPolicy: corev1.DNSClusterFirst,
+				},
+			},
+		},
+	}
+
+	_, err = clientset.AppsV1().Deployments(kubernetesNamespace).Create(context.Background(), deployment, metav1.CreateOptions{})
+	if err != nil {
+		log.Printf("[ERROR] Failed creating deployment: %v", err)
+		return err
+	}
+
+	// kubectl expose deployment shuffle-workers --type=NodePort --port=33333 --target-port=33333
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: identifier,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: containerLabels,
+			Ports: []corev1.ServicePort{
+				{
+					Protocol:   "TCP",
+					Port:       33333,
+					TargetPort: intstr.FromInt(33333),
+				},
+			},
+			Type: corev1.ServiceTypeNodePort,
+		},
+	}
+
+	_, err = clientset.CoreV1().Services(kubernetesNamespace).Create(context.Background(), service, metav1.CreateOptions{})
+	if err != nil {
+		log.Printf("[ERROR] Failed creating service: %v", err)
+		return err
+	}
+
+	return nil
+}
 
 func deployWorker(image string, identifier string, env []string, executionRequest shuffle.ExecutionRequest) error {
 	if len(os.Getenv("REGISTRY_URL")) > 0 && os.Getenv("REGISTRY_URL") != "" {
 		env = append(env, fmt.Sprintf("REGISTRY_URL=%s", os.Getenv("REGISTRY_URL")))
 	}
 
-	if isKubernetes == "true" {
-		env = append(env, fmt.Sprintf("IS_KUBERNETES=true"))
-		env = append(env, fmt.Sprintf("KUBERNETES_NAMESPACE=%s", os.Getenv("KUBERNETES_NAMESPACE")))
+	// if isKubernetes == "true" {
+	// 	err := deployK8sWorker(image, identifier, env, executionRequest)
+	// 	if err != nil {
+	// 		log.Printf("[ERROR] Failed deploying Kubernetes worker: %s", err)
+	// 	}
 
-		if len(os.Getenv("KUBERNETES_SERVICE_HOST")) > 0 {
-			env = append(env, fmt.Sprintf("KUBERNETES_SERVICE_HOST=%s", os.Getenv("KUBERNETES_SERVICE_HOST")))
-		} 
-
-		if len(os.Getenv("KUBERNETES_SERVICE_PORT")) > 0 {
-			env = append(env, fmt.Sprintf("KUBERNETES_SERVICE_PORT=%s", os.Getenv("KUBERNETES_SERVICE_PORT")))
-		}
-
-
-		clientset, config, err := getKubernetesClient()
-		if err != nil {
-			log.Printf("[ERROR] Error getting kubernetes client:", err)
-			return err
-		}
-
-		env = append(env, fmt.Sprintf("KUBERNETES_CONFIG=%s", config.String()))
-
-		// FIXME: When a service account is used, the account is also mounted in the pod
-		// The volume mount location is: 
-		// /var/run/secrets/kubernetes.io/serviceaccount
-
-		// Look for if there is a default service account in use
-		if len(os.Getenv("KUBERNETES_SERVICE_ACCOUNT")) > 0 {
-			log.Printf("[DEBUG] Using Kubernetes service account %s", os.Getenv("KUBERNETES_SERVICE_ACCOUNT"))
-			env = append(env, fmt.Sprintf("KUBERNETES_SERVICE_ACCOUNT=%s", os.Getenv("KUBERNETES_SERVICE_ACCOUNT")))
-
-			// use k8s downward API to find it if we are in a pod
-		}
-
-		// Check if namespace exist as variable. If so, make it
-		if len(os.Getenv("KUBERNETES_NAMESPACE")) > 0 && !namespacemade {
-			kubernetesNamespace = os.Getenv("KUBERNETES_NAMESPACE")
-
-			// Make the namespace
-			namespace := &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: os.Getenv("KUBERNETES_NAMESPACE"),
-				},
-			}
-
-			_, err := clientset.CoreV1().Namespaces().Create(context.Background(), namespace, metav1.CreateOptions{})
-			if err != nil {
-				if !strings.Contains(strings.ToLower(fmt.Sprintf("%s", err)), "already exists") {
-					log.Printf("[ERROR] Failed creating Kubernetes namespace: %s", err)
-				} else {
-					namespacemade = true
-				}
-			} else {
-				namespacemade = true
-			}
-		}
-
-		if len(kubernetesNamespace) == 0 {
-			kubernetesNamespace = "default"
-		}
-
-		kubernetesImage := os.Getenv("SHUFFLE_KUBERNETES_WORKER")
-		if len(kubernetesImage) == 0 {
-			kubernetesImage = image
-		}
-		log.Printf("[DEBUG] Using Kubernetes worker image '%s'", kubernetesImage)
-		// image = "shuffle-worker:v1" //hard coded image name to test locally
-
-		envMap := make(map[string]string)
-		for _, envStr := range env {
-			parts := strings.SplitN(envStr, "=", 2)
-			if len(parts) == 2 {
-				envMap[parts[0]] = parts[1]
-			}
-		}
-
-		// While testing:
-		// kubectl delete pods --all --all-namespaces; kubectl delete services --all --all-namespaces
-		pod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   identifier,
-				Labels: map[string]string{"app": "shuffle-worker"},
-			},
-			Spec: corev1.PodSpec{
-				RestartPolicy: "Never",
-				DNSPolicy:     "Default",
-				// NodeSelector: map[string]string{
-				// 	"node": "master",
-				// },
-				Containers: []corev1.Container{
-					{
-						Name:  identifier,
-						Image: kubernetesImage,
-						Env:   buildEnvVars(envMap),
-						
-						//ImagePullPolicy: "Never",
-						ImagePullPolicy: corev1.PullIfNotPresent,
-						//ImagePullPolicy: "Always",
-					},
-				},
-			},
-		}
-
-		// Check if running on ARM or x86 to download the correct image
-
-		// Add environment variables
-		// pod.Spec.Containers[0].Env = buildEnvVars(envMap)
-
-		createdPod, err := clientset.CoreV1().Pods(kubernetesNamespace).Create(context.Background(), pod, metav1.CreateOptions{})
-		if err != nil {
-			//log.Printf("[ERROR] Failed creating pod: %v", err)
-			return err
-		}
-
-		log.Printf("[INFO] Created pod %q in namespace %q\n", createdPod.Name, createdPod.Namespace)
-		return nil
-	}
+	// 	return err
+	// }
 
 	// Binds is the actual "-v" volume.
 	// Max 20% CPU every second
@@ -813,23 +1241,25 @@ func deployWorker(image string, identifier string, env []string, executionReques
 		}
 	}
 
-	hostConfig.NetworkMode = container.NetworkMode(fmt.Sprintf("container:%s", containerId))
-	if strings.ToLower(cleanupEnv) != "false" {
-		hostConfig.AutoRemove = true
-	}
-
 	config := &container.Config{
 		Image: image,
 		Env:   env,
 	}
 
+	if isKubernetes != "true" {
+		hostConfig.NetworkMode = container.NetworkMode(fmt.Sprintf("container:%s", containerId))
+		if strings.ToLower(cleanupEnv) != "false" {
+			hostConfig.AutoRemove = true
+		}
+	}
+
 	//var swarmConfig = os.Getenv("SHUFFLE_SWARM_CONFIG")
 	parsedUuid := uuid.NewV4()
-	if swarmConfig == "run" || swarmConfig == "swarm" {
+	if swarmConfig == "run" || swarmConfig == "swarm" || isKubernetes == "true" {
 		// FIXME: Should we handle replies properly?
 		// In certain cases, a workflow may e.g. be aborted already. If it's aborted, that returns
 		// a 401 from the worker, which returns an error here
-		go sendWorkerRequest(executionRequest)
+		go sendWorkerRequest(executionRequest, image, env)
 
 		return nil
 	}
@@ -994,7 +1424,7 @@ func initializeImages() {
 		newWorker,
 	}
 
-	pullOptions := types.ImagePullOptions{}
+	pullOptions := image.PullOptions{}
 	for _, image := range images {
 		if isKubernetes == "true" {
 			log.Printf("[DEBUG] Skipping image pull of '%s' because Kubernetes does it in realtime instead", image)
@@ -1174,8 +1604,7 @@ func getOrborusStats(ctx context.Context) shuffle.OrborusStats {
 		newStats.MaxMemory = int(pers.MemTotal)
 	}
 
-
-		// Get list of all running containers
+	// Get list of all running containers
 	containers, err := dockercli.ContainerList(ctx, container.ListOptions{})
 
 	if err != nil {
@@ -1289,51 +1718,8 @@ func getOrborusStats(ctx context.Context) shuffle.OrborusStats {
 	return newStats
 }
 
-func isRunningInCluster() bool {
-	_, existsHost := os.LookupEnv("KUBERNETES_SERVICE_HOST")
-	_, existsPort := os.LookupEnv("KUBERNETES_SERVICE_PORT")
-	return existsHost && existsPort
-}
-
-func getKubernetesClient() (*kubernetes.Clientset, *rest.Config, error) {
-
-	config := &rest.Config{}
-	var err error
-
-	if isRunningInCluster() {
-		config, err := rest.InClusterConfig()
-		if err != nil {
-			return nil, config, err
-		}
-
-		clientset, err := kubernetes.NewForConfig(config)
-		if err != nil {
-			return nil, config, err
-		}
-
-		return clientset, config, nil
-
-	} 
-
-	home := homedir.HomeDir()
-	kubeconfigPath := filepath.Join(home, ".kube", "config")
-	config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		return nil, config, err
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, config, err
-	}
-
-	return clientset, config, nil
-}
-
-
 func sendRemoveRequest(client *http.Client, toBeRemoved shuffle.ExecutionRequestWrapper, baseUrl, environment, auth, org string, sleepTime int) error {
 	confirmUrl := fmt.Sprintf("%s/api/v1/workflows/queue/confirm", baseUrl)
-
 	data, err := json.Marshal(toBeRemoved)
 	if err != nil {
 		log.Printf("[WARNING] Failed removal marshalling: %s", err)
@@ -1404,8 +1790,12 @@ func main() {
 	//defer cleanup()
 
 	// Block until a signal is received
-	if isRunningInCluster() {
+	if shuffle.IsRunningInCluster() {
 		log.Printf("[INFO] Running inside k8s cluster")
+	}
+
+	if isKubernetes == "true" {
+		fixk8sRoles()
 	}
 
 	startupDelay := os.Getenv("SHUFFLE_ORBORUS_STARTUP_DELAY")
@@ -1498,6 +1888,24 @@ func main() {
 		log.Printf("[WARNING] Defaulting to environment name %s. Set environment variable ENVIRONMENT_NAME to change. This should be the same as in the frontend action.", environment)
 	}
 
+	if pipelineUrl == "" {
+		pipelineUrl = "http://localhost:5160"
+
+		// Find the IP in baseUrl. Base format is http://<ip>:<port>
+		if baseUrl != "" {
+			urlSplit := strings.Split(baseUrl, "://")
+			if len(urlSplit) > 1 {
+				// Find the IP
+				ipSplit := strings.Split(urlSplit[1], ":")
+				if len(ipSplit) > 0 {
+					pipelineUrl = fmt.Sprintf("http://%s:5160", ipSplit[0])
+				}
+			}
+		}
+
+		log.Printf("[WARNING] SHUFFLE_PIPELINE_URL not set, falling back to default URL: %s. If BASE_URL is set, we use the external IP for that", pipelineUrl)
+	}
+
 	// FIXME - during init, BUILD and/or LOAD worker and app_sdk
 	// Build/load app_sdk so it can be loaded as 127.0.0.1:5000/walkoff_app_sdk
 	log.Printf("[INFO] Setting up Docker environment. Downloading worker and App SDK!")
@@ -1508,16 +1916,26 @@ func main() {
 		workerImage = newWorkerImage
 	}
 
-	if swarmConfig == "run" || swarmConfig == "swarm" {
-		checkSwarmService(ctx)
+	if swarmConfig == "run" || swarmConfig == "swarm" || isKubernetes == "true" {
+		if isKubernetes != "true" {
+			checkSwarmService(ctx)
+		}
 
 		log.Printf("[DEBUG] Cleaning up containers from previous run")
 		cleanupExistingNodes(ctx)
 		time.Sleep(time.Duration(5) * time.Second)
 
 		log.Printf("[DEBUG] Deploying worker image %s to swarm", workerImage)
-		deployServiceWorkers(workerImage)
-		log.Printf("[DEBUG] Waiting 45 seconds to ensure workers are deployed. Run: \"docker service ls\" for more info")
+
+		runString := "Run: \"docker service ls\" for more info"
+
+		if isKubernetes != "true" {
+			deployServiceWorkers(workerImage)
+		} else {
+			deployK8sWorker(workerImage, "shuffle-workers", []string{})
+			runString = "Run: \"kubectl get pods\" for more info"
+		}
+		log.Printf("[DEBUG] Waiting 45 seconds to ensure workers are deployed. %s", runString)
 		time.Sleep(time.Duration(45) * time.Second)
 
 		//deployServiceWorkers(workerImage)
@@ -1527,7 +1945,12 @@ func main() {
 
 	client := shuffle.GetExternalClient(baseUrl)
 	fullUrl := fmt.Sprintf("%s/api/v1/workflows/queue", baseUrl)
-	log.Printf("[INFO] Finished configuring docker environment. Connecting to %s", fullUrl)
+
+	if isKubernetes == "true" {
+		log.Printf("[INFO] Finished configuring kubernetes environment. Connecting to %s", fullUrl)
+	} else {
+		log.Printf("[INFO] Finished configuring docker environment. Connecting to %s", fullUrl)
+	}
 
 	forwardData := bytes.NewBuffer([]byte{})
 	forwardMethod := "POST"
@@ -1584,6 +2007,8 @@ func main() {
 	log.Printf("[INFO] Waiting for executions at %s with Environment %#v", fullUrl, environment)
 	hasStarted := false
 	for {
+		_ = sendTenzirHealthStatus()
+
 		if req.Method == "POST" {
 			// Should find data to send (memory etc.)
 
@@ -1668,13 +2093,12 @@ func main() {
 			continue
 		}
 
-
 		if hasStarted && len(executionRequests.Data) > 0 {
 			//log.Printf("[INFO] Body: %s", string(body))
 			// Type string `json:"type"`
 		}
 
-		// FIXME: Add features here for orborus & worker to 
+		// FIXME: Add features here for orborus & worker to
 		// do things on behalf of backend
 		var toBeRemoved shuffle.ExecutionRequestWrapper
 		if len(executionRequests.Data) > 0 {
@@ -1686,20 +2110,92 @@ func main() {
 					err := handlePipeline(incRequest)
 					if err != nil {
 						log.Printf("[ERROR] Failed handling pipeline: %s", err)
+					} else {
+						toBeRemoved.Data = append(toBeRemoved.Data, incRequest)
 					}
-
-					toBeRemoved.Data = append(toBeRemoved.Data, incRequest)
 				} else if incRequest.Type == "DOCKER_IMAGE_DOWNLOAD" {
-					log.Printf("[INFO] Should delete -> download new image %#v", incRequest.ExecutionArgument)
+					log.Printf("[INFO] Should delete -> download new images: %#v", incRequest.ExecutionArgument)
 
 					if len(incRequest.ExecutionArgument) > 0 {
-						err = handleBackendImageDownload(ctx, incRequest.ExecutionArgument)
-						if err != nil {
-							log.Printf("[ERROR] Failed handling image delete -> download: %s", err)
-						}
+						// FIXME: Wait X seconds before running this as the image build may not be done yet. This is shitty, but may be ok to do in Orborus. Easy fix for the future: Just let it run through jobs 5-10 times before actually picking it up
 
+						// Run after 25 seconds in the goroutine instead 
+						go handleBackendImageDownload(ctx, incRequest.ExecutionArgument)
+					} else {
+						log.Printf("[ERROR] No image name provided for download. Removing job from queue.")
 					}
+
 					toBeRemoved.Data = append(toBeRemoved.Data, incRequest)
+
+				} else if incRequest.Type == "CATEGORY_UPDATE" {
+
+					err := deployTenzirNode()
+					if err != nil {
+						log.Printf("[ERROR] Failed to deploy CATEGORY UPDATE, reason: %s", err)
+					} else {
+						continue
+					}
+
+					err = handleFileCategoryChange()
+					if err != nil {
+						log.Printf("[ERROR] Failed to download the file category: %s", err)
+					} else {
+						toBeRemoved.Data = append(toBeRemoved.Data, incRequest)
+					}
+
+				} else if incRequest.Type == "DISABLE_SIGMA_FILE" {
+					fileName := incRequest.ExecutionArgument
+					err := deployTenzirNode()
+					if err != nil {
+						log.Printf("[ERROR] Failed to deploy DISABLE SIGMA FILE, reason: %s", err)
+					} else {
+						continue
+					}
+
+					err = disableRule(fileName)
+					if err != nil {
+						log.Printf("[ERROR] Failed to disable the sigma file %s, reason: %s", fileName, err)
+					} else {
+						toBeRemoved.Data = append(toBeRemoved.Data, incRequest)
+					}
+
+				} else if incRequest.Type == "ENABLE_SIGMA_FILE" {
+					fileName := incRequest.ExecutionArgument
+					err := deployTenzirNode()
+					if err != nil {
+						log.Printf("[ERROR] Failed to deploy ENABLE SIGMA FILE, reason: %s", err)
+					} else {
+						continue
+					}
+					
+					err = enableRule(fileName)
+					if err != nil {
+						log.Printf("[ERROR] Failed to disable the sigma file %s, reason: %s", fileName, err)
+					} else {
+						toBeRemoved.Data = append(toBeRemoved.Data, incRequest)
+					}
+
+				} else if incRequest.Type == "DISABLE_SIGMA_FOLDER" {
+					err := deployTenzirNode()
+					if err != nil {
+						log.Printf("[ERROR] Failed to deploy DISABLE SIGMA FOLDER, reason: %s", err)
+					}
+
+					err = removeAllFiles()
+					if err != nil {
+						log.Printf("[ERROR] Failed to disable the sigma rules: %s", err)
+					} else {
+						toBeRemoved.Data = append(toBeRemoved.Data, incRequest)
+					}
+				} else if incRequest.Type == "START_TENZIR" {
+					log.Printf("[INFO] Got job to start tenzir")
+					err := deployTenzirNode()
+					if err != nil {
+						log.Printf("[ERROR] Failed to deploy the pipeline, reason: %s", err)
+					} else {
+						toBeRemoved.Data = append(toBeRemoved.Data, incRequest)
+					}
+
 				} else {
 					newrequests = append(newrequests, incRequest)
 				}
@@ -1746,7 +2242,7 @@ func main() {
 				log.Printf("[WARNING] Throttle - Cutting down requests from %d to %d (MAX: %d, CUR: %d)", len(executionRequests.Data), allowed, maxConcurrency, executionCount)
 				executionRequests.Data = executionRequests.Data[0:allowed]
 			}
-		} else if (swarmControlMode && (swarmConfig == "run" || swarmConfig == "swarm")) {
+		} else if swarmControlMode && (swarmConfig == "run" || swarmConfig == "swarm") {
 			if len(executionRequests.Data) > 50 {
 				executionRequests.Data = executionRequests.Data[0:50]
 			}
@@ -1890,11 +2386,9 @@ func main() {
 			}
 
 		}
-
 		time.Sleep(time.Duration(sleepTime) * time.Second)
 	}
 }
-
 
 // func deployPipeline(image, identifier, command string) error {
 // 	if isKubernetes == "true" {
@@ -1919,7 +2413,6 @@ func main() {
 
 // 	envVariables := []string{
 // 	}
-
 
 // 	// Add volume binds for storage
 // 	// Want read/write with full access for the container
@@ -1957,8 +2450,7 @@ func main() {
 // 	config.Labels = map[string]string{
 // 		"name":   identifier,
 // 		"shuffle": "shuffle",
-// 	}			
-
+// 	}
 
 // 	cont, err := dockercli.ContainerCreate(
 // 		ctx,
@@ -1980,8 +2472,8 @@ func main() {
 
 // 	containerStartOptions := container.StartOptions{}
 // 	err = dockercli.ContainerStart(
-// 		ctx, 
-// 		cont.ID, 
+// 		ctx,
+// 		cont.ID,
 // 		containerStartOptions,
 // 	)
 // 	if err != nil {
@@ -2000,8 +2492,8 @@ func main() {
 // 			}
 
 // 			err = dockercli.ContainerStart(
-// 				ctx, 
-// 				cont.ID, 
+// 				ctx,
+// 				cont.ID,
 // 				containerStartOptions,
 // 			)
 // 			if err != nil {
@@ -2045,8 +2537,6 @@ func main() {
 // 	return nil
 // }
 
-
-
 // Tenzir command samples
 // docker pull ghcr.io/dominiklohmann/tenzir-arm64:latest
 // docker tag ghcr.io/dominiklohmann/tenzir-arm64:latest tenzir/tenzir:latest
@@ -2054,15 +2544,10 @@ func main() {
 // Read from Cache and send it to a webhook
 // docker run tenzir/tenzir:latest 'from http://192.168.86.44:5002/api/v1/orgs/7e9b9007-5df2-4b47-bca5-c4d267ef2943/cache/CIDR%20ranges?type=text&authorization=cec9d01f-09b2-4419-8a0a-76c6046e3fef read lines | to http://192.168.86.44:5002/api/v1/hooks/webhook_665ace5f-f27b-496a-a365-6e07eb61078c write lines'
 func handlePipeline(incRequest shuffle.ExecutionRequest) error {
-	
-	if tenzirUrl == "" {
-		tenzirUrl = "http://localhost:5160"
-		log.Printf("[WARNING] SHUFFLE_TENZIR_URL not set, falling back to default URL: %s",tenzirUrl)
-	}
 
 	err := deployTenzirNode()
-	if err != nil{
-		log.Printf("[ERROR] failed to deploy the pipeline, reason: %s", err)
+	if err != nil {
+		log.Printf("[ERROR] Failed to deploy the pipeline, reason: %s", err)
 		return err
 	}
 
@@ -2095,7 +2580,7 @@ func handlePipeline(incRequest shuffle.ExecutionRequest) error {
 		if err != nil {
 			log.Printf("[ERROR] Failed Deleting Pipeline %s", err)
 			return err
-		} 
+		}
 	} else if incRequest.Type == "PIPELINE_STOP" {
 		log.Printf("[INFO] Should stop the pipeline %#v", identifier)
 		pipelineId, err := searchPipeline(identifier)
@@ -2103,7 +2588,7 @@ func handlePipeline(incRequest shuffle.ExecutionRequest) error {
 			log.Printf("[ERROR] Failed searching for Pipeline with name %s reason:%s ", identifier, err)
 			return err
 		}
-		_, err = updatePipelineState(pipelineId, "stop")
+		_, err = updatePipelineState(command, pipelineId, "stop")
 		if err != nil {
 			log.Printf("[ERROR] Failed to stop Pipeline: %s reason:%s ", pipelineId, err)
 			return err
@@ -2111,10 +2596,10 @@ func handlePipeline(incRequest shuffle.ExecutionRequest) error {
 			log.Printf("[INFO] successfully stopped the Pipeline: %s", pipelineId)
 		}
 
-	}  else if incRequest.Type == "PIPELINE_START" {
+	} else if incRequest.Type == "PIPELINE_START" {
 		log.Printf("[INFO] Should start the pipeline %#v", identifier)
 		pipelineId, err := searchPipeline(identifier)
-		if err != nil { 
+		if err != nil {
 			if err.Error() == "no existing pipeline found with name" {
 				log.Printf("[WARNING] no pipeline found for %s, creating a new one", identifier)
 				_, CreateErr := createPipeline(command, identifier)
@@ -2123,7 +2608,7 @@ func handlePipeline(incRequest shuffle.ExecutionRequest) error {
 			log.Printf("[ERROR] Failed searching for Pipeline with name %s reason:%s ", identifier, err)
 			return err
 		}
-		_, err = updatePipelineState(pipelineId, "start")
+		_, err = updatePipelineState(command, pipelineId, "start")
 		if err != nil {
 			log.Printf("[ERROR] Failed to start Pipeline: %s reason:%s ", pipelineId, err)
 			return err
@@ -2140,157 +2625,218 @@ func handlePipeline(incRequest shuffle.ExecutionRequest) error {
 }
 
 func deployTenzirNode() error {
-    if isKubernetes == "true" {
-        return errors.New("kubernetes not implemented")
-    }
+	if isKubernetes == "true" {
+		return errors.New("kubernetes not implemented")
+	}
 
-    ctx := context.Background()
-    cacheKey := "tenzir-key"
+	ctx := context.Background()
+	cacheKey := "tenzir-key"
 
-    imageName := "tenzir/tenzir:latest"
-    containerName := "tenzir-node"
-    containerStartOptions := container.StartOptions{}
+	imageName := "tenzir/tenzir:latest"
+	containerName := "tenzir-node"
+	containerStartOptions := container.StartOptions{}
 
-    _, err := shuffle.GetCache(ctx, cacheKey)
-    if err == nil {
-        return nil
-    }
+	_, err := shuffle.GetCache(ctx, cacheKey)
+	if err == nil {
+		return nil
+	}
 
-    containerInfo, err := dockercli.ContainerInspect(ctx, containerName)
-    if err != nil {
-        if dockerclient.IsErrNotFound(err) {
+	containerInfo, err := dockercli.ContainerInspect(ctx, containerName)
+	if err != nil {
+		if dockerclient.IsErrNotFound(err) {
+			// Create network if it doesn't exist
+			networkName := "tenzir-network"
+			networkSubnet := "192.168.1.0/24"
+			networkGateway := "192.168.1.1"
 
-            // Check if image exists
-            _, _, err := dockercli.ImageInspectWithRaw(ctx, imageName)
-            if dockerclient.IsErrNotFound(err) {
-                log.Printf("[DEBUG] pulling image %s", imageName)
-                pullOptions := types.ImagePullOptions{}
-                out, err := dockercli.ImagePull(ctx, imageName, pullOptions)
-                if err != nil {
-                    log.Printf("[ERROR] Failed to pull the Tenzir image: %s", err)
-                    return err
-                }
-                defer out.Close()
+			err = createNetworkIfNotExists(ctx, networkName, networkSubnet, networkGateway)
+			if err != nil {
+				log.Printf("[ERROR] Failed to create network: %s", err)
+				return err
+			}
 
-                io.Copy(io.Discard, out)
-            } else if err != nil {
-                return err
-            }
+			// Check if image exists
+			_, _, err := dockercli.ImageInspectWithRaw(ctx, imageName)
+			if dockerclient.IsErrNotFound(err) {
+				log.Printf("[DEBUG] Pulling image %s", imageName)
+				pullOptions := image.PullOptions{}
+				out, err := dockercli.ImagePull(ctx, imageName, pullOptions)
+				if err != nil {
+					log.Printf("[ERROR] Failed to pull the Tenzir image: %s", err)
+					return err
+				}
+				defer out.Close()
 
-            err = createAndStartTenzirNode(ctx, containerName, imageName, containerStartOptions)
-            if err != nil {
-                return err
-            }
-        } else {
-            return err
-        }
-    } else {
-        if !containerInfo.State.Running {
-            log.Printf("[DEBUG] Tenzir Node exists but is not running")
-            err := dockercli.ContainerStart(ctx, containerName, containerStartOptions)
-            if err != nil {
-                log.Printf("[ERROR] Failed to start Tenzir Node container: %v", err)
-                return err
-            }
+				io.Copy(io.Discard, out)
+			} else if err != nil {
+				return err
+			}
 
-            log.Printf("[INFO] Waiting for Tenzir to become available ...")
-            err = checkTenzirNode()
-            if err != nil {
-                return err
-            }
-        }
-    }
+			err = createAndStartTenzirNode(ctx, containerName, imageName, containerStartOptions)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	} else {
+		if !containerInfo.State.Running {
+			log.Printf("[DEBUG] Tenzir Node exists but is not running")
+			err := dockercli.ContainerStart(ctx, containerName, containerStartOptions)
+			if err != nil {
+				log.Printf("[ERROR] Failed to start Tenzir Node container: %v", err)
+				return err
+			}
 
-    tenzirStatus := struct {
-        ContainerStatus string `json:"container_status"`
-    }{
-        ContainerStatus: "running",
-    }
+			log.Printf("[INFO] Waiting for Tenzir to become available ...")
+			err = checkTenzirNode()
+			if err != nil {
+				return err
+			}
+		}
+	}
 
-    cacheData, err := json.Marshal(tenzirStatus)
-    if err != nil {
-        log.Printf("[WARNING] Failed marshalling execution: %s", err)
-    }
-    err = shuffle.SetCache(ctx, cacheKey, cacheData, 1)
-    if err != nil {
-        log.Printf("[WARNING] Failed updating cache for tenzir: %s", err)
-    }
+	tenzirStatus := struct {
+		ContainerStatus string `json:"container_status"`
+	}{
+		ContainerStatus: "running",
+	}
 
-    return nil
+	cacheData, err := json.Marshal(tenzirStatus)
+	if err != nil {
+		log.Printf("[WARNING] Failed marshalling execution: %s", err)
+	}
+	err = shuffle.SetCache(ctx, cacheKey, cacheData, 1)
+	if err != nil {
+		log.Printf("[WARNING] Failed updating cache for tenzir: %s", err)
+	}
+
+	return nil
+}
+
+func createAndStartTenzirNode(ctx context.Context, containerName, imageName string, containerStartOptions container.StartOptions) error {
+	healthconfig := &container.HealthConfig{
+		Test:     []string{"tenzir --connection-timeout=30s --connection-retry-delay=1s 'api /ping'"},
+		Interval: 30 * time.Second,
+		Retries:  1,
+	}
+
+	config := &container.Config{
+		Cmd:          []string{"--commands=web server --mode=dev --bind=0.0.0.0"},
+		Image:        imageName,
+		Healthcheck:  healthconfig,
+		ExposedPorts: nat.PortSet{"5160/tcp": struct{}{}},
+		Entrypoint:   []string{containerName},
+	}
+
+	hostConfig := &container.HostConfig{
+		PortBindings: nat.PortMap{
+			"5160/tcp": []nat.PortBinding{{HostPort: "5160"}},
+		},
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeVolume,
+				Source: containerName,
+				Target: "/var/lib/tenzir/",
+			},
+		},
+		VolumeDriver: "local",
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"tenzir-network": {
+				IPAMConfig: &network.EndpointIPAMConfig{
+					IPv4Address: "192.168.1.100",
+				},
+			},
+		},
+	}
+
+	_, err := dockercli.ContainerCreate(ctx, config, hostConfig, networkingConfig, nil, containerName)
+	if err != nil {
+		return err
+	}
+
+	err = dockercli.ContainerStart(ctx, containerName, containerStartOptions)
+	if err != nil {
+		log.Printf("[ERROR] Failed to start Tenzir Node container: %v", err)
+		return err
+	}
+	log.Printf("[INFO] Tenzir Node container started successfully")
+
+	log.Printf("[INFO] Waiting for Tenzir to become available ...")
+	err = checkTenzirNode()
+	if err != nil {
+		return err
+	}
+	log.Printf("[INFO] Successfully deployed Tenzir Node!")
+
+	return nil
+}
+
+func createNetworkIfNotExists(ctx context.Context, networkName, subnet, gateway string) error {
+	networks, err := dockercli.NetworkList(ctx, types.NetworkListOptions{})
+	if err != nil {
+		return err
+	}
+
+	for _, network := range networks {
+		if network.Name == networkName {
+			// Network exists
+			return nil
+		}
+	}
+
+	ipamConfig := &network.IPAM{
+		Config: []network.IPAMConfig{
+			{
+				Subnet:  subnet,
+				Gateway: gateway,
+			},
+		},
+	}
+
+	networkCreate := types.NetworkCreate{
+		//CheckDuplicate: true,
+		Driver: "bridge",
+		IPAM:   ipamConfig,
+	}
+
+	_, err = dockercli.NetworkCreate(ctx, networkName, networkCreate)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func checkTenzirNode() error {
-    retries := 20
-    retryInterval := 3 * time.Second
-	url := fmt.Sprintf("%s/api/v0/ping",tenzirUrl)
+	retries := 1
+
+	//retryInterval := 3 * time.Second
+	url := fmt.Sprintf("%s/api/v0/ping", pipelineUrl)
 	forwardMethod := "POST"
 
-    client := http.Client{}
-    req, err := http.NewRequest(forwardMethod, url, nil)
+	client := http.Client{
+		Timeout: 1 * time.Second,
+	}
+	req, err := http.NewRequest(forwardMethod, url, nil)
 	if err != nil {
 		log.Printf("[ERROR] Failed to create HTTP request: %s", err)
 		return err
 	}
 
-    for i := 0; i < retries; i++ {
-        resp, err := client.Do(req)
-        if err == nil && resp.StatusCode == http.StatusOK {
-            return nil
-        }
-        time.Sleep(retryInterval)
-    }
+	for i := 0; i < retries; i++ {
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			return nil
+		}
 
-    return fmt.Errorf("tenzir node is not available")
-}
+		//time.Sleep(retryInterval)
+	}
 
-func createAndStartTenzirNode(ctx context.Context, containerName, imageName string, containerStartOptions container.StartOptions) error {
-    healthconfig := &container.HealthConfig{
-        Test:     []string{"tenzir --connection-timeout=30s --connection-retry-delay=1s 'api /ping'"},
-        Interval: 30 * time.Second,
-        Retries:  1,
-    }
-
-    config := &container.Config{
-        Cmd:          []string{"--commands=web server --mode=dev --bind=0.0.0.0"},
-        Image:        imageName,
-        Healthcheck:  healthconfig,
-        ExposedPorts: nat.PortSet{"5160/tcp": struct{}{}},
-        Entrypoint:   []string{containerName},
-    }
-
-    hostConfig := &container.HostConfig{
-        PortBindings: nat.PortMap{
-            "5160/tcp": []nat.PortBinding{{HostPort: "5160"}},
-        },
-        Mounts: []mount.Mount{
-            {
-                Type:   mount.TypeVolume,
-                Source: containerName,
-                Target: "/var/lib/tenzir/",
-            },
-        },
-        VolumeDriver: "local",
-    }
-    _, err := dockercli.ContainerCreate(ctx, config, hostConfig, nil, nil, containerName)
-    if err != nil {
-        return err
-    }
-
-    err = dockercli.ContainerStart(ctx, containerName, containerStartOptions)
-    if err != nil {
-        log.Printf("[ERROR] Failed to start Tenzir Node container: %v", err)
-        return err
-    }
-    log.Printf("[INFO] Tenzir Node container started successfully")
-
-    log.Printf("[INFO] Waiting for Tenzir to become available ...")
-    err = checkTenzirNode()
-    if err != nil {
-        return err
-    }
-    log.Printf("[INFO] Successfully deployed Tenzir Node !")
-
-    return nil
+	return fmt.Errorf("tenzir node is not available")
 }
 
 func createPipeline(command, identifier string) (string, error) {
@@ -2298,7 +2844,7 @@ func createPipeline(command, identifier string) (string, error) {
 	toBeDeleted := false
 	pipelineId, err := searchPipeline(identifier)
 
-	url :=  fmt.Sprintf("%s/api/v0/pipeline/create", tenzirUrl)
+	url := fmt.Sprintf("%s/api/v0/pipeline/create", pipelineUrl)
 	forwardMethod := "POST"
 
 	if err != nil {
@@ -2311,32 +2857,36 @@ func createPipeline(command, identifier string) (string, error) {
 		log.Printf("[INFO] an existing pipeline found with ID: %s. it will be deleted", pipelineId)
 		toBeDeleted = true
 	}
-    if strings.Contains(command, "shuffler.io") {
+	// if strings.Contains(command, "shuffler.io") {
 
-	} else {
-		var scheme string
-		if strings.Contains(command, "http://") {
-			scheme = "http://"
-		} else if strings.Contains(command, "https://") {
-			scheme = "https://"
-		}
+	// } else {
+	// 	var scheme string
+	// 	if strings.Contains(command, "http://") {
+	// 		scheme = "http://"
+	// 	} else if strings.Contains(command, "https://") {
+	// 		scheme = "https://"
+	// 	}
 
-		startIndex := strings.Index(command, scheme)
-		if startIndex != -1 {
-			endIndex := startIndex + len(scheme)
-			endIndex += strings.Index(command[endIndex:], "/")
-			
-			command = command[:startIndex] + baseUrl + command[endIndex:]
-		}
-	}
+	// 	startIndex := strings.Index(command, scheme)
+	// 	if startIndex != -1 {
+	// 		endIndex := startIndex + len(scheme)
+	// 		endIndex += strings.Index(command[endIndex:], "/")
+
+	// 		command = command[:startIndex] + baseUrl + command[endIndex:]
+	// 	}
+	// }
+
+	//command = "from file /var/lib/tenzir/sysmon_logs.ndjson read json | sigma /var/lib/tenzir/rule.yaml"
+	//command = "from file /var/lib/tenzir/sysmon_logs.ndjson read json | import"
+
 	requestBody := map[string]interface{}{
 		"definition": command,
 		"name":       identifier,
 		"hidden":     false,
 		"autostart": map[string]bool{
 			"created":   true,
-			"completed": true,
-			"failed":    true,
+			"completed": false,
+			"failed":    false,
 		},
 		"autodelete": map[string]bool{
 			"completed": false,
@@ -2402,14 +2952,15 @@ func createPipeline(command, identifier string) (string, error) {
 	return id, nil
 }
 
-func updatePipelineState(pipelineId, action string) (string, error) {
+func updatePipelineState(command, pipelineId, action string) (string, error) {
 
-	url :=  fmt.Sprintf("%s/api/v0/pipeline/update", tenzirUrl)
+	url := fmt.Sprintf("%s/api/v0/pipeline/update", pipelineUrl)
 	forwardMethod := "POST"
 
 	requestBody := map[string]interface{}{
-		"id":     pipelineId,
-		"action": action,
+		"id":         pipelineId,
+		"definition": command,
+		"action":     action,
 		"autostart": map[string]bool{
 			"created":   true,
 			"completed": true,
@@ -2473,7 +3024,7 @@ func deletePipeline(pipelineId string) error {
 		"id": pipelineId,
 	}
 
-	url :=  fmt.Sprintf("%s/api/v0/pipeline/delete", tenzirUrl)
+	url := fmt.Sprintf("%s/api/v0/pipeline/delete", pipelineUrl)
 	forwardMethod := "POST"
 
 	requestBodyJSON, err := json.Marshal(requestBody)
@@ -2519,9 +3070,9 @@ func searchPipeline(identifier string) (string, error) {
 		Name string `json:"name"`
 	}
 
-	var reqBody []byte 
+	var reqBody []byte
 
-	url :=  fmt.Sprintf("%s/api/v0/pipeline/list", tenzirUrl)
+	url := fmt.Sprintf("%s/api/v0/pipeline/list", pipelineUrl)
 
 	resp, err := http.Post(url, "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
@@ -2554,65 +3105,341 @@ func searchPipeline(identifier string) (string, error) {
 	return "", errors.New("no existing pipeline found with name")
 }
 
-// func savePipelineData(pipelineId, identifier, status string) error {
+func handleFileCategoryChange() error {
+	apiEndpoint := baseUrl + "/api/v1/files/namespaces/sigma"
+	req, err := http.NewRequest("GET", apiEndpoint, nil)
+	if err != nil {
+		return err
+	}
 
-// 	url :=  fmt.Sprintf("%s/api/v1/triggers/pipeline/save", baseUrl)
-// 	identifierWithoutPrefix := strings.TrimPrefix(identifier, "shuffle-")
+	req.Header.Add("Authorization", "Bearer "+apiKey)
 
-// 	forwardMethod := "PUT"
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
-// 	payload := map[string]interface{}{
-// 		"pipeline_id": pipelineId,
-// 		"trigger_id":  identifierWithoutPrefix,
-// 		"status":      status,
-// 	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("received non-200 response: %s", resp.Status)
+	}
 
-// 	payloadBytes, err := json.Marshal(payload)
-// 	if err != nil {
-// 		log.Printf("[ERROR] Failed to marshal payload: %s", err)
-// 		return err
-// 	}
+	out, err := os.Create("files.zip")
+	if err != nil {
+		return err
+	}
 
-// 	forwardData := bytes.NewBuffer(payloadBytes)
+	defer out.Close()
+	defer os.Remove("files.zip")
 
-// 	req, err := http.NewRequest(
-// 		forwardMethod,
-// 		url,
-// 		forwardData,
-// 	)
-// 	if err != nil {
-// 		log.Printf("[ERROR] Failed to create HTTP request: %s", err)
-// 		return err
-// 	}
-// 	req.Header.Set("Content-Type", "application/json")
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return err
+	}
 
-// 	client := &http.Client{Timeout: 10 * time.Second}
-// 	resp, err := client.Do(req)
-// 	if err != nil {
-// 		log.Printf("[ERROR] Failed to send HTTP request: %s", err)
-// 		return err
-// 	}
-// 	defer resp.Body.Close()
+	log.Println("ZIP file downloaded successfully.")
 
-// 	if resp.StatusCode != 200 {
-// 		log.Printf("[ERROR] Received non-successful HTTP status code: %d", resp.StatusCode)
-// 		return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
-// 	}
+	err = extractZIP("files.zip", "sigma_rules")
+	if err != nil {
+		return err
+	}
 
-// 	return nil
-// }
+	destPath := "/var/lib/tenzir/sigma_rules"
+
+	err = copyToTenzir("sigma_rules", destPath)
+	if err != nil {
+		return err
+	}
+
+	log.Println("Files copied to container successfully.")
+
+	checkDisabledDirCmd := exec.Command("docker", "exec", "tenzir-node", "sh", "-c", "test -d /var/lib/tenzir/disabled_rules")
+	if err := checkDisabledDirCmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			// Directory does not exist, nothing to do
+			log.Println("[DEBUG] /var/lib/tenzir/disabled_rules does not exist.")
+			return nil
+		}
+
+		return fmt.Errorf("error checking disabled rules directory: %v", err)
+	}
+
+	// List files in /var/lib/tenzir/disabled_rules
+	listFilesCmd := exec.Command("docker", "exec", "tenzir-node", "sh", "-c", "ls /var/lib/tenzir/disabled_rules")
+	output, err := listFilesCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error listing files in disabled rules directory: %v, output: %s", err, output)
+	}
+
+	files := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, file := range files {
+		disabledFilePath := fmt.Sprintf("/var/lib/tenzir/sigma_rules/%s", file)
+		checkFileCmd := exec.Command("docker", "exec", "tenzir-node", "sh", "-c", fmt.Sprintf("test -f %s", disabledFilePath))
+		if err := checkFileCmd.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+				log.Printf("[ERROR] File does not exist: %s, moving on.\n", disabledFilePath)
+				continue
+			}
+			return fmt.Errorf("error checking file: %v", err)
+		}
+
+		deleteFileCmd := exec.Command("docker", "exec", "-u", "root", "tenzir-node", "sh", "-c", fmt.Sprintf("rm -f %s", disabledFilePath))
+		if err := deleteFileCmd.Run(); err != nil {
+			return fmt.Errorf("error deleting file: %v", err)
+		}
+		log.Printf("[INFO] Deleted file: %s\n", disabledFilePath)
+	}
+
+	return nil
+}
+
+func extractZIP(zipFile, destDir string) error {
+	r, err := zip.OpenReader(zipFile)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	for _, f := range r.File {
+		err := extractFile(f, destDir)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func extractFile(f *zip.File, destDir string) error {
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+
+	path := filepath.Join(destDir, f.Name)
+
+	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, rc)
+	return err
+}
+
+func copyToTenzir(srcPath, destPath string) error {
+	containerName := "tenzir-node"
+
+	checkCmd := exec.Command("docker", "exec", containerName, "test", "-d", destPath)
+	if err := checkCmd.Run(); err == nil {
+		rmCmd := exec.Command("docker", "exec", "-u", "root", containerName, "rm", "-rf", destPath)
+		if err := rmCmd.Run(); err != nil {
+			return fmt.Errorf("error removing existing directory in container: %v", err)
+		}
+	}
+
+	cpCmd := exec.Command("docker", "cp", srcPath, fmt.Sprintf("%s:%s", containerName, destPath))
+	var out bytes.Buffer
+	cpCmd.Stdout = &out
+	cpCmd.Stderr = &out
+
+	err := cpCmd.Run()
+	if err != nil {
+		return fmt.Errorf("error copying files: %v, output: %s", err, out.String())
+	}
+
+	return nil
+}
+
+func removeAllFiles() error {
+	containerName := "tenzir-node"
+	sigmaPath := "/var/lib/tenzir/sigma_rules/*"
+
+	checkCmd := exec.Command("docker", "exec", "-u", "root", containerName, "sh", "-c", fmt.Sprintf("ls %s", sigmaPath))
+	checkOutput, checkErr := checkCmd.CombinedOutput()
+	if checkErr != nil {
+		if strings.Contains(string(checkOutput), "No such file or directory") {
+			return nil // nothing to delete
+		}
+		return fmt.Errorf("error checking files: %v, output: %s", checkErr, checkOutput)
+	}
+
+	cmd := exec.Command("docker", "exec", "-u", "root", containerName, "sh", "-c", fmt.Sprintf("rm -rf %s", sigmaPath))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error removing files: %v, output: %s", err, output)
+	}
+	return nil
+}
+
+func removeFile(fileName string) error {
+	containerName := "tenzir-node"
+	srcPath := fmt.Sprintf("/var/lib/tenzir/sigma_rules/%s", fileName)
+
+	checkSrcCmd := exec.Command("docker", "exec", containerName, "sh", "-c", fmt.Sprintf("test -f %s", srcPath))
+	if err := checkSrcCmd.Run(); err != nil {
+		// If the file does not exist, simply return nil
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			log.Printf("[ERROR] No such file: %s, nothing to delete\n", srcPath)
+			return nil
+		}
+		return fmt.Errorf("error checking source file: %v", err)
+	}
+
+	return removePath(containerName, srcPath)
+}
+
+func removePath(containerName, path string) error {
+	rmCmd := exec.Command("docker", "exec", "-u", "root", containerName, "sh", "-c", fmt.Sprintf("rm -rf %s", path))
+	output, err := rmCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error removing path: %v, output: %s", err, output)
+	}
+	return nil
+}
+
+func sendTenzirHealthStatus() error {
+	// Check one in every 10 times only
+	randint := rand.Intn(10)
+	_ = randint
+	//if randint != 0 {
+	//	return nil
+	//}
+
+	var status string
+	url := fmt.Sprintf("%s/api/v1/detections/siem/health", baseUrl)
+	err := checkTenzirNode()
+	if err != nil {
+		return err
+	} else {
+		status = "active"
+	}
+
+	//log.Printf("[DEBUG] Sending Tenzir health update to backend url '%s'", baseUrl)
+	forwardMethod := "POST"
+	payload := map[string]interface{}{
+		"status": status,
+		"environment": environment,
+		"authorization": "",
+		"org_id": "",
+
+	}
+
+	if len(auth) > 0 {
+		payload["authorization"] = auth
+	}
+
+	if len(org) > 0 {
+		payload["org_id"] = org
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[ERROR] Failed to marshal payload: %s", err)
+		return err
+	}
+	forwardData := bytes.NewBuffer(payloadBytes)
+	req, err := http.NewRequest(
+		forwardMethod,
+		url,
+		forwardData,
+	)
+	if err != nil {
+		log.Printf("[ERROR] Failed to create HTTP request: %s", err)
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[ERROR] Failed to send HTTP request: %s", err)
+		return err
+	}
+
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		//log.Printf("[ERROR] Pipeline: status for URL %s: %d", url, resp.StatusCode)
+		return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func disableRule(fileName string) error {
+	containerName := "tenzir-node"
+	srcPath := fmt.Sprintf("/var/lib/tenzir/sigma_rules/%s", fileName)
+	destDir := "/var/lib/tenzir/disabled_rules"
+	destPath := fmt.Sprintf("%s/%s", destDir, fileName)
+
+	checkSrcCmd := exec.Command("docker", "exec", containerName, "sh", "-c", fmt.Sprintf("test -f %s", srcPath))
+	if err := checkSrcCmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			fmt.Printf("File does not exist: %s\n", srcPath)
+			return nil // Nothing to disable
+		}
+		return fmt.Errorf("error checking source file: %v", err)
+	}
+
+	checkDestDirCmd := exec.Command("docker", "exec", "-u", "root", containerName, "sh", "-c", fmt.Sprintf("mkdir -p %s", destDir))
+	if err := checkDestDirCmd.Run(); err != nil {
+		return fmt.Errorf("error ensuring destination directory exists: %v", err)
+	}
+
+	moveCmd := exec.Command("docker", "exec", "-u", "root", containerName, "sh", "-c", fmt.Sprintf("mv %s %s", srcPath, destPath))
+	if err := moveCmd.Run(); err != nil {
+		return fmt.Errorf("error moving file: %v", err)
+	}
+
+	fmt.Printf("File %s moved to %s successfully.\n", fileName, destDir)
+	return nil
+}
+
+func enableRule(fileName string) error {
+	containerName := "tenzir-node"
+	srcPath := fmt.Sprintf("/var/lib/tenzir/disabled_rules/%s", fileName)
+	destDir := "/var/lib/tenzir/sigma_rules"
+	destPath := fmt.Sprintf("%s/%s", destDir, fileName)
+
+	checkSrcCmd := exec.Command("docker", "exec", containerName, "sh", "-c", fmt.Sprintf("test -f %s", srcPath))
+	if err := checkSrcCmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			fmt.Printf("File does not exist: %s\n", srcPath)
+			return nil // Nothing to enable
+		}
+		return fmt.Errorf("error checking source file: %v", err)
+	}
+
+	checkDestDirCmd := exec.Command("docker", "exec", "-u", "root", containerName, "sh", "-c", fmt.Sprintf("mkdir -p %s", destDir))
+	if err := checkDestDirCmd.Run(); err != nil {
+		return fmt.Errorf("error ensuring destination directory exists: %v", err)
+	}
+	moveCmd := exec.Command("docker", "exec", "-u", "root", containerName, "sh", "-c", fmt.Sprintf("mv %s %s", srcPath, destPath))
+	if err := moveCmd.Run(); err != nil {
+		return fmt.Errorf("error moving file: %v", err)
+	}
+
+	fmt.Printf("File %s moved to %s successfully.\n", fileName, destDir)
+	return nil
+}
 
 // Is this ok to do with Docker? idk :)
 func getRunningWorkers(ctx context.Context, workerTimeout int) int {
 	//log.Printf("[DEBUG] Getting running workers with API version %s", dockerApiVersion)
 	counter := 0
-	if isKubernetes  == "true" {
+	if isKubernetes == "true" {
 		log.Printf("[INFO] Getting running workers in kubernetes")
-
 
 		thresholdTime := time.Now().Add(time.Duration(-workerTimeout) * time.Second)
 
-		clientset, _, err := getKubernetesClient()
+		clientset, _, err := shuffle.GetKubernetesClient()
 		if err != nil {
 			log.Printf("[ERROR] Failed getting kubernetes client: %s", err)
 			return 0
@@ -2792,7 +3619,7 @@ func zombiecheck(ctx context.Context, workerTimeout int) error {
 	return nil
 }
 
-func sendWorkerRequest(workflowExecution shuffle.ExecutionRequest) error {
+func sendWorkerRequest(workflowExecution shuffle.ExecutionRequest, image string, env []string) error {
 	parsedRequest := shuffle.OrborusExecutionRequest{
 		ExecutionId:           workflowExecution.ExecutionId,
 		Authorization:         workflowExecution.Authorization,
@@ -2825,13 +3652,35 @@ func sendWorkerRequest(workflowExecution shuffle.ExecutionRequest) error {
 		streamUrl = fmt.Sprintf("%s:33333/api/v1/execute", parsedBaseurl)
 	}
 
-	if len(workerServerUrl) > 0 {
-		streamUrl = fmt.Sprintf("%s:33333/api/v1/execute", workerServerUrl)
+	identifier := "shuffle-workers"
+
+	if isKubernetes == "true" {
+		if shuffle.IsRunningInCluster() {
+			log.Printf("[INFO] Running in Kubernetes cluster")
+			// try getting the k8s worker server url
+		}
 	}
 
-	if strings.Contains(streamUrl, "shuffler.io") || strings.Contains(streamUrl, "localhost") || strings.Contains(streamUrl, "shuffle-backend") {
-		log.Printf("[INFO] Using default worker server url as previous is invalid: %s", streamUrl)
+	if strings.Contains(streamUrl, "shuffler.io") || strings.Contains(streamUrl, "localhost") || strings.Contains(streamUrl, "127.0.0.1") || strings.Contains(streamUrl, "shuffle-backend") {
+
+		// Specific to debugging 
+		if len(workerServerUrl) == 0 {
+			log.Printf("[INFO] Using default worker server url as previous is invalid: %s", streamUrl)
+		}
+
 		streamUrl = fmt.Sprintf("http://shuffle-workers:33333/api/v1/execute")
+	}
+
+	if len(workerServerUrl) > 0 {
+		// Check if a port is supplied or not
+		if strings.Contains(workerServerUrl, "/api/v1/execute") {
+			streamUrl = workerServerUrl
+		} else {
+			streamUrl = fmt.Sprintf("%s/api/v1/execute", workerServerUrl)
+			if !strings.Contains(workerServerUrl, ":") {
+				streamUrl = fmt.Sprintf("%s:33333/api/v1/execute", workerServerUrl)
+			}
+		}
 	}
 
 	client := &http.Client{}
@@ -2849,7 +3698,12 @@ func sendWorkerRequest(workflowExecution shuffle.ExecutionRequest) error {
 			if len(newWorkerImage) > 0 {
 				workerImage = newWorkerImage
 			}
-			deployServiceWorkers(workerImage)
+
+			if isKubernetes == "true" {
+				deployK8sWorker(workerImage, identifier, env)
+			} else {
+				deployServiceWorkers(workerImage)
+			}
 
 			time.Sleep(time.Duration(10) * time.Second)
 			//err = sendWorkerRequest(executionRequest)
@@ -2868,7 +3722,11 @@ func sendWorkerRequest(workflowExecution shuffle.ExecutionRequest) error {
 				workerImage = newWorkerImage
 			}
 
-			deployServiceWorkers(workerImage)
+			if isKubernetes == "true" {
+				deployK8sWorker(workerImage, identifier, env)
+			} else {
+				deployServiceWorkers(workerImage)
+			}
 
 			time.Sleep(time.Duration(10) * time.Second)
 			//err = sendWorkerRequest(executionRequest)
@@ -2897,6 +3755,11 @@ func sendWorkerRequest(workflowExecution shuffle.ExecutionRequest) error {
 
 	_ = body
 
-	log.Printf("[DEBUG] Ran worker from request with execution ID: %s. Worker URL: %s. DEBUGGING:\ndocker service logs shuffle-workers 2>&1 -f | grep %s", workflowExecution.ExecutionId, streamUrl, workflowExecution.ExecutionId)
+	debugCommand := fmt.Sprintf("docker service logs shuffle-workers 2>&1 -f | grep %s", workflowExecution.ExecutionId)
+	if isKubernetes == "true" {
+		debugCommand = fmt.Sprintf("kubectl logs -n %s container=shuffle-worker | grep %s", kubernetesNamespace, workflowExecution.ExecutionId)
+	}
+
+	log.Printf("[DEBUG] Ran worker from request with execution ID: %s. Worker URL: %s. DEBUGGING:\n%s", workflowExecution.ExecutionId, streamUrl, debugCommand)
 	return nil
 }

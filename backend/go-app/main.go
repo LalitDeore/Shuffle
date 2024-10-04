@@ -36,6 +36,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/storage/memory"
+    gitProxy "github.com/go-git/go-git/v5/plumbing/transport"
 
 	// Random
 	xj "github.com/basgys/goxml2json"
@@ -396,6 +397,52 @@ func checkUsername(Username string) error {
 	return nil
 }
 
+func isGitNoProxy(rawURL string) bool {
+    noProxy := os.Getenv("NO_PROXY")
+    if noProxy == "" {
+        return false
+    }
+    
+    if noProxy == "*" {
+        return true
+    }
+
+    noProxyList := strings.Split(noProxy, ",")
+    parsedURL, err := url.Parse(rawURL)
+    if err != nil {
+        return false
+    }
+    host := parsedURL.Hostname()
+
+    for _,value := range noProxyList {
+        value = strings.TrimSpace(value)
+
+        if host == value {
+            return true 
+        }
+        if strings.HasPrefix(value, "*.") && strings.HasSuffix(host, value[2:]){
+            return true
+        }
+    }
+    return false
+}
+
+func checkGitProxy(cloneOptions *git.CloneOptions) *git.CloneOptions {
+    if os.Getenv("HTTP_PROXY") != "" && !isGitNoProxy(cloneOptions.URL){
+        cloneOptions.ProxyOptions = gitProxy.ProxyOptions{
+		    URL: os.Getenv("HTTP_PROXY"),
+	    }
+    }
+
+    if os.Getenv("HTTPS_PROXY") != "" && !isGitNoProxy(cloneOptions.URL) {
+        cloneOptions.ProxyOptions = gitProxy.ProxyOptions{
+		    URL: os.Getenv("HTTPS_PROXY"),
+	    }
+    }
+
+    return cloneOptions
+}
+
 func createNewUser(username, password, role, apikey string, org shuffle.OrgMini) error {
 	// Returns false if there is an issue
 	// Use this for register
@@ -450,6 +497,7 @@ func createNewUser(username, password, role, apikey string, org shuffle.OrgMini)
 	newUser.ActiveOrg = shuffle.OrgMini{
 		Id:   org.Id,
 		Name: org.Name,
+		Role: newUser.Role,
 	}
 
 	if len(apikey) > 0 {
@@ -887,15 +935,56 @@ func handleInfo(resp http.ResponseWriter, request *http.Request) {
 
 	//if err == nil {
 	if len(org.Id) > 0 {
+		if userInfo.Role == "" {
+			//err = shuffle.SetUser(ctx, &userInfo, false)
+			for _, user := range org.Users {
+				if user.Id != userInfo.Id {
+					continue
+				}
+
+				userInfo.ActiveOrg.Role = user.Role
+			}
+		}
+
 		userInfo.ActiveOrg = shuffle.OrgMini{
 			Id:         org.Id,
 			Name:       org.Name,
 			CreatorOrg: org.CreatorOrg,
+			ChildOrgs:  org.ChildOrgs,
 			Role:       userInfo.ActiveOrg.Role,
 			Image:      org.Image,
 		}
+
+		if parsedAdmin == "false" {
+			// Validating admin user again just to make sure
+			// This is to avoid issues for the first org ever
+			for _, user := range org.Users {
+				if user.Id != userInfo.Id {
+					continue
+				}
+
+				if user.Role == "admin" {
+					break
+				}
+			}
+		}
 	}
-	//}
+
+	orgPriorities := org.Priorities
+	if len(org.Priorities) < 10 {
+		//log.Printf("[WARNING] Should find and add priorities as length is less than 10 for org %s", userInfo.ActiveOrg.Id)
+		newPriorities, err := shuffle.GetPriorities(ctx, userInfo, org)
+		if err != nil {
+			log.Printf("[WARNING] Failed getting new priorities for org %s: %s", org.Id, err)
+			//orgPriorities = []shuffle.Priority{}
+		} else {
+			orgPriorities = newPriorities
+
+			// A way to manage them over time
+		}
+	}
+
+	orgInterests := org.Interests
 
 	userInfo.ActiveOrg.Users = []shuffle.UserMini{}
 	userOrgs := []shuffle.OrgMini{}
@@ -942,19 +1031,6 @@ func handleInfo(resp http.ResponseWriter, request *http.Request) {
 	}
 
 	userOrgs = shuffle.SortOrgList(userOrgs)
-	orgPriorities := org.Priorities
-	if len(org.Priorities) < 10 {
-		//log.Printf("[WARNING] Should find and add priorities as length is less than 10 for org %s", userInfo.ActiveOrg.Id)
-		newPriorities, err := shuffle.GetPriorities(ctx, userInfo, org)
-		if err != nil {
-			log.Printf("[WARNING] Failed getting new priorities for org %s: %s", org.Id, err)
-			//orgPriorities = []shuffle.Priority{}
-		} else {
-			orgPriorities = newPriorities
-
-			// A way to manage them over time
-		}
-	}
 
 	tutorialsFinished := []shuffle.Tutorial{}
 	for _, tutorial := range userInfo.PersonalInfo.Tutorials {
@@ -993,7 +1069,8 @@ func handleInfo(resp http.ResponseWriter, request *http.Request) {
 		ChatDisabled: chatDisabled,
 		Tutorials:    tutorialsFinished,
 
-		Priorities: orgPriorities,
+		Interests: 	  orgInterests,
+		Priorities:   orgPriorities,
 		Licensed: 		  licensed,
 	}
 
@@ -1978,7 +2055,6 @@ func handleWebhookCallback(resp http.ResponseWriter, request *http.Request) {
 }
 
 func handlePipelineCallback(resp http.ResponseWriter, request *http.Request) {
-
 	if request.Method != "POST" {
 		request.Method = "POST"
 	}
@@ -1999,7 +2075,7 @@ func handlePipelineCallback(resp http.ResponseWriter, request *http.Request) {
 	location := strings.Split(request.URL.String(), "/")
 
 	var pipelineId string
-	
+
 	if location[1] == "api" {
 		if len(location) <= 4 {
 			log.Printf("[INFO] Couldn't handle location. Too short in pipeline: %d", len(location))
@@ -2013,7 +2089,7 @@ func handlePipelineCallback(resp http.ResponseWriter, request *http.Request) {
 
 	userAgent := request.Header.Get("User-Agent")
 	if strings.Contains(strings.ToLower(userAgent), "microsoftpreview") || strings.Contains(strings.ToLower(userAgent), "googlebot") {
-		log.Printf("[AUDIT] Blocking googlebot and microsoftbot for pielines. UA: '%s'", userAgent)
+		log.Printf("[AUDIT] Blocking googlebot and microsoftbot for pipelines. UA: '%s'", userAgent)
 		resp.WriteHeader(400)
 		resp.Write([]byte(`{"success": false, "reason": "Google/Microsoft preview bots not allowed. Please change the useragent."}`))
 		return
@@ -2058,11 +2134,27 @@ func handlePipelineCallback(resp http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	parsedBody := shuffle.GetExecutionbody(body)
+	// Parse concatenated JSON logs
+	jsonList, err := parseConcatenatedJSONLogs(string(body))
+	if err != nil {
+		log.Printf("[DEBUG] JSON parsing error: %s", err)
+		resp.WriteHeader(401)
+		resp.Write([]byte(`{"success": false}`))
+		return
+	}
+
+	parsedBody, err := json.Marshal(jsonList)
+	if err != nil {
+		log.Printf("[ERROR] Failed to marshal jsonList: %s", err)
+		resp.WriteHeader(500)
+		resp.Write([]byte(`{"success": false}`))
+		return
+	}
+
 	newBody := shuffle.ExecutionStruct{
 		Start:             pipeline.StartNode,
 		ExecutionSource:   "pipeline",
-		ExecutionArgument: parsedBody,
+		ExecutionArgument: string(parsedBody),
 	}
 
 	workflow, err := shuffle.GetWorkflow(ctx, pipeline.WorkflowId)
@@ -2093,8 +2185,7 @@ func handlePipelineCallback(resp http.ResponseWriter, request *http.Request) {
 	}
 
 	if len(pipeline.StartNode) == 0 {
-		log.Printf("[WARNING] No start node for pipeline %s - running with workflow default.", pipeline.TriggerId)
-
+		log.Printf("[WARNING] No start node for pipeline %s - running with workflow default.")
 	}
 
 	newRequest := &http.Request{
@@ -2108,11 +2199,50 @@ func handlePipelineCallback(resp http.ResponseWriter, request *http.Request) {
 	if err == nil {
 		resp.WriteHeader(200)
 		resp.Write([]byte(fmt.Sprintf(`{"success": true, "execution_id": "%s"}`, workflowExecution.ExecutionId)))
+
+		// Track Sigma rules
+		trackSigmaRules(ctx, pipeline.OrgId, jsonList)
 		return
 	}
 
 	resp.WriteHeader(500)
 	resp.Write([]byte(fmt.Sprintf(`{"success": false, "reason": "%s"}`, executionResp)))
+}
+
+func parseConcatenatedJSONLogs(logs string) ([]map[string]interface{}, error) {
+	var jsonList []map[string]interface{}
+	decoder := json.NewDecoder(strings.NewReader(logs))
+
+	for decoder.More() {
+		var jsonObject map[string]interface{}
+		if err := decoder.Decode(&jsonObject); err != nil {
+			log.Printf("[WARNING] JSON decoding error: %s. Skipping this object.", err)
+			continue
+		}
+		jsonList = append(jsonList, jsonObject)
+	}
+
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("error after decoding all JSON objects: %v", err)
+	}
+
+	return jsonList, nil
+}
+
+func trackSigmaRules(ctx context.Context, orgId string, jsonList []map[string]interface{}) {
+	ruleCount := make(map[string]int)
+	for _, logEntry := range jsonList {
+		if rule, ok := logEntry["rule"].(map[string]interface{}); ok {
+			if ruleName, ok := rule["title"].(string); ok {
+				ruleCount[ruleName]++
+			}
+		}
+	}
+
+	for ruleName, count := range ruleCount {
+		shuffle.IncrementCache(ctx, orgId, ruleName, count)
+		log.Printf("[INFO] Rule %s incremented by %d", ruleName, count)
+	}
 }
 
 func executeCloudAction(action shuffle.CloudSyncJob, apikey string) error {
@@ -3809,7 +3939,7 @@ func runInitEs(ctx context.Context) {
 	}
 
 	if strings.Contains(os.Getenv("SHUFFLE_OPENSEARCH_URL"), "https") {
-		log.Printf("[INFO] Waiting during init to make sure the opensearch instance is up and running with security features properly")
+		log.Printf("[INFO] Waiting 30 seconds during init to make sure the opensearch instance is up and running with security features enabled")
 		time.Sleep(30 * time.Second)
 	}
 
@@ -4145,6 +4275,8 @@ func runInitEs(ctx context.Context) {
 			}
 		}
 
+        cloneOptions = checkGitProxy(cloneOptions)
+
 		branch := os.Getenv("SHUFFLE_DOWNLOAD_AUTH_BRANCH")
 		if len(branch) > 0 && branch != "master" && branch != "main" {
 			cloneOptions.ReferenceName = plumbing.ReferenceName(branch)
@@ -4189,6 +4321,9 @@ func runInitEs(ctx context.Context) {
 	cloneOptions := &git.CloneOptions{
 		URL: apis,
 	}
+
+    cloneOptions = checkGitProxy(cloneOptions)
+
 	_, err = git.Clone(storer, fs, cloneOptions)
 	if err != nil {
 		log.Printf("[ERROR] Failed loading repo %s into memory: %s", apis, err)
@@ -4942,6 +5077,7 @@ func initHandlers() {
 	r.HandleFunc("/api/v1/register", handleRegister).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/v1/checkusers", checkAdminLogin).Methods("GET", "OPTIONS")
 	r.HandleFunc("/api/v1/getinfo", handleInfo).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/v1/me", handleInfo).Methods("GET", "OPTIONS")
 	r.HandleFunc("/api/v1/getsettings", shuffle.HandleSettings).Methods("GET", "OPTIONS")
 	r.HandleFunc("/api/v1/generateapikey", shuffle.HandleApiGeneration).Methods("GET", "POST", "OPTIONS")
 	r.HandleFunc("/api/v1/passwordchange", shuffle.HandlePasswordChange).Methods("POST", "OPTIONS")
@@ -5090,11 +5226,13 @@ func initHandlers() {
 
 	r.HandleFunc("/api/v1/orgs/{orgId}/validate_app_values", shuffle.HandleKeyValueCheck).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/v1/orgs/{orgId}/list_cache", shuffle.HandleListCacheKeys).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/v1/orgs/{orgId}/cache/{cache_key}", shuffle.HandleGetCacheKey).Methods("GET", "OPTIONS")
 	r.HandleFunc("/api/v1/orgs/{orgId}/get_cache", shuffle.HandleGetCacheKey).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/v1/orgs/{orgId}/set_cache", shuffle.HandleSetCacheKey).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/v1/orgs/{orgId}/delete_cache", shuffle.HandleDeleteCacheKeyPost).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/v1/orgs/{orgId}/cache/{cache_key}", shuffle.HandleDeleteCacheKey).Methods("DELETE", "OPTIONS")
 	r.HandleFunc("/api/v1/orgs/{orgId}/stats", shuffle.HandleGetStatistics).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/v1/orgs/{orgId}/stats", shuffle.HandleAppendStatistics).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/v1/orgs/{orgId}/statistics", shuffle.HandleGetStatistics).Methods("GET", "OPTIONS")
 
 	r.HandleFunc("/api/v1/orgs/{orgId}/cache", shuffle.HandleListCacheKeys).Methods("GET", "OPTIONS")
@@ -5122,6 +5260,18 @@ func initHandlers() {
 	r.HandleFunc("/api/v1/files/{fileId}", shuffle.HandleGetFileMeta).Methods("GET", "OPTIONS")
 	r.HandleFunc("/api/v1/files/{fileId}", shuffle.HandleDeleteFile).Methods("DELETE", "OPTIONS")
 	r.HandleFunc("/api/v1/files", shuffle.HandleGetFiles).Methods("GET", "OPTIONS")
+
+	// This structure is horrendous. Needs fixing after we got the prototype up
+	r.HandleFunc("/api/v1/detections/{detectionType}/connect", shuffle.HandleDetectionAutoConnect).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/v1/detections/{detection_type}", shuffle.HandleGetDetectionRules).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/v1/detections/{triggerId}/selected_rules", shuffle.HandleGetSelectedRules).Methods("GET","OPTIONS")
+	r.HandleFunc("/api/v1/detections/{triggerId}/selected_rules/save", shuffle.HandleSaveSelectedRules).Methods("POST","OPTIONS")
+	r.HandleFunc("/api/v1/detections/{action}", shuffle.HandleFolderToggle).Methods("PUT", "OPTIONS")
+
+	// This is weird.
+	r.HandleFunc("/api/v1/detections/{fileId}/{action}", shuffle.HandleToggleRule).Methods("PUT", "OPTIONS")
+	r.HandleFunc("/api/v1/detections/siem/node_health", shuffle.HandleTenzirHealthUpdate).Methods("POST","OPTIONS")
+
 
 	// Introduced in 0.9.21 to handle notifications for e.g. failed Workflow
 	r.HandleFunc("/api/v1/notifications", shuffle.HandleCreateNotification).Methods("POST", "OPTIONS")

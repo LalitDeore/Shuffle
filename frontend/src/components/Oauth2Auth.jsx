@@ -299,12 +299,11 @@ const AuthenticationOauth2 = (props) => {
 
   const handleOauth2Request = (client_id, client_secret, oauth_url, scopes, admin_consent, prompt, skipScopeReplace) => {
 
-	  console.log("SKIP SCOPE: ", skipScopeReplace)
 	  if (skipScopeReplace === false || skipScopeReplace === undefined) {
 
 		  console.log("Selected scopes: ", selectedScopes)
 		  if (selectedScopes !== undefined && selectedScopes !== null && selectedScopes.length > 0) {
-			  toast("Using your scopes instead of the default ones")
+			  //toast("Using your scopes instead of the default ones")
 			  scopes = selectedScopes
 		  }
 	  }
@@ -471,32 +470,46 @@ const AuthenticationOauth2 = (props) => {
       state += `%26refresh_uri%3d${authentication_url}`;
     }
 
-		// No prompt forcing
-    //var url = `${authenticationType.redirect_uri}?client_id=${client_id}&redirect_uri=${redirectUri}&response_type=code&prompt=login&scope=${resources}&state=${state}&access_type=offline`;
+	// FIXME: Should this be =consent?
 	var defaultPrompt = "login"
    	if (prompt !== undefined && prompt !== null && prompt.length > 0) {
-			defaultPrompt = prompt
-		}
+		defaultPrompt = prompt
+	}
 		
-		var url = `${authenticationType.redirect_uri}?client_id=${client_id}&redirect_uri=${redirectUri}&response_type=code&prompt=${defaultPrompt}&scope=${resources}&state=${state}&access_type=offline`;
+	var url = `${authenticationType.redirect_uri}?client_id=${client_id}&redirect_uri=${redirectUri}&response_type=code&prompt=${defaultPrompt}&scope=${resources}&state=${state}&access_type=offline`;
+	if (admin_consent === true) {
+		console.log("Running Oauth2 WITH admin consent")
+		//url = `${authenticationType.redirect_uri}?client_id=${client_id}&redirect_uri=${redirectUri}&response_type=code&prompt=consent&scope=${resources}&state=${state}&access_type=offline`;
+		url = `${authenticationType.redirect_uri}?client_id=${client_id}&redirect_uri=${redirectUri}&response_type=code&prompt=admin_consent&scope=${resources}&state=${state}&access_type=offline`;
+	}
 
-		if (admin_consent === true) {
-			console.log("Running Oauth2 WITH admin consent")
-    	//url = `${authenticationType.redirect_uri}?client_id=${client_id}&redirect_uri=${redirectUri}&response_type=code&prompt=consent&scope=${resources}&state=${state}&access_type=offline`;
-    	url = `${authenticationType.redirect_uri}?client_id=${client_id}&redirect_uri=${redirectUri}&response_type=code&prompt=admin_consent&scope=${resources}&state=${state}&access_type=offline`;
+	if (url !== undefined && url !== null && url.length > 0) {
+		if (url.toLowerCase().includes("{tenant")) {
+			// Check location of {tenant, then find the next } and replace with 'common'. Make sure next } is AFTER {tenant 
+			try { 
+				const tenantIndex = url.toLowerCase().indexOf("{tenant")
+				const substring = url.substring(tenantIndex)
+				const nextBracket = substring.indexOf("}")
+				const newUrl = url.substring(0, tenantIndex) + "common" + url.substring(tenantIndex + nextBracket + 1)
+				url = newUrl
+			} catch (e) {
+				console.log("Failed to replace {tenant} with common: ", e)
+			}
+
 		}
+	}
 
-		// Force new consent
+	/*
+	console.log("OAUTH2 URL: ", url)
+	return 
+	*/
+
+
+	// Force new consent
     //const url = `${authenticationType.redirect_uri}?client_id=${client_id}&redirect_uri=${redirectUri}&response_type=code&scope=${resources}&prompt=consent&state=${state}&access_type=offline`;
 
-		// Admin consent
+	// Admin consent
     //const url = `https://accounts.zoho.com/oauth/v2/auth?response_type=code&client_id=${client_id}&scope=AaaServer.profile.Read&redirect_uri=${redirectUri}&prompt=consent`
-    
-		// &resource=https%3A%2F%2Fgraph.microsoft.com&
-
-    // FIXME: Awful, but works for prototyping
-    // How can we get a callback properly realtime?
-    // How can we properly try-catch without breaks on error?
     try {
       var newwin = window.open(url, "", "width=582,height=700");
       //console.log(newwin)
@@ -997,7 +1010,6 @@ const AuthenticationOauth2 = (props) => {
 											color: "white",
 											padding: 5, 
 											minWidth: 300,
-											maxWidth: 300,
 										}}
                   						onChange={(e, value) => {
 											//handleScopeChange(e)

@@ -428,7 +428,6 @@ const ConfigureWorkflow = (props) => {
 		  	console.log("Found webhook: ", trigger)
 
 		  	if (trigger.app_association !== undefined && trigger.app_association.name !== null && trigger.app_association.name !== "") {
-		  		console.log("Actions: ", newactions)
 		  		const findapp = trigger.app_association.name.toLowerCase()
 		  		const foundindex = newactions.findIndex(action => action.app_name.toLowerCase() === findapp)
 
@@ -448,9 +447,6 @@ const ConfigureWorkflow = (props) => {
 		  			}
 		  	
 		  			newactions[foundindex].show_steps = true
-
-		  			console.log("CHANGED ACTION: ", newactions[foundindex])
-		  			//console.log("Index: ", newactions[foundindex])
 
 		  			continue
 		  		}
@@ -796,8 +792,6 @@ const ConfigureWorkflow = (props) => {
 	}
 
 	parsedName = (parsedName.charAt(0).toUpperCase() + parsedName.slice(1)).replaceAll("_", " ");
-
-	console.log("AUTH Action: ", action)
 	return (
 		<ListItem 
 			style={{padding: 0, display: "flex", flexDirection: "column", }}
@@ -1321,7 +1315,6 @@ const ConfigureWorkflow = (props) => {
 						}
 
 						if (step.type === "authenticate") {
-							console.log("AUTH STEP: ", step)
 							if (data.must_authenticate === true ) {
 								filled = false
 							} else {
