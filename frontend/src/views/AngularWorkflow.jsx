@@ -12926,6 +12926,11 @@ const releaseToConnectLabel = "Release to Connect"
         return "no-overrides";
       }
 
+      console.log("LIST WITH VALUES: ", listWithValues)
+      if (listWithValues === undefined || listWithValues === null || listWithValues.length === 0) {
+        return "no-overrides";
+      }
+
       for (let i = 0; i < listWithValues.length; i++) {
         mappingWithName[listWithValues[i][0]] = listWithValues[i][1]
       }

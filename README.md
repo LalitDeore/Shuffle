@@ -4,20 +4,16 @@
 
 Shuffle Automation
 
-[![CodeQL](https://github.com/Shuffle/Shuffle/actions/workflows/codeql-analysis.yml/badge.svg?branch=launch)](https://github.com/Shuffle/Shuffle/actions/workflows/codeql-analysis.yml)
-[![Autobuild](https://github.com/Shuffle/Shuffle/actions/workflows/dockerbuild.yaml/badge.svg?branch=launch)](https://github.com/Shuffle/Shuffle/actions/workflows/dockerbuild.yaml)
-
 </h1><h4 align="center">
 
-[Shuffle](https://shuffler.io) is an automation platform for and by the community, focusing on accessibility for anyone to automate. Security operations is complex, but it doesn't have to be.
+[Shuffle](https://shuffler.io) is an open source automation platform, built for and by the security professionals. Security operations is complex, but it doesn't have to be. Built to work well with MSSP's and other service providers in mind.
 
 [ Get training ](https://shuffler.io/training)
 [_Key Features_](https://shuffler.io/docs/features) —
 [_Community & Support_](https://discord.gg/B2CBzUm) —
+[ Get training ](https://shuffler.io/training) -
 [_Documentation_](https://shuffler.io/docs) —
-[_Getting Started_](https://shuffler.io/docs/getting_started) —
-[_Development_](https://github.com/shuffle/Shuffle/blob/master/.github/CONTRIBUTING.md) 
-[ Set up a demo call ](https://shuffler.io/contact)
+[_Getting Started_](https://shuffler.io/docs/getting_started)
 
 Follow us on Twitter at [@shuffleio](https://twitter.com/shuffleio).
 
@@ -104,6 +100,9 @@ Apps, specification and App SDK: MIT
 
 ## Architecture
 ![Shuffle Architecture](https://github.com/shuffle/Shuffle/blob/main/frontend/src/assets/img/shuffle_architecture.png)
+
+## Security Contributors: Hall of Fame
+[Pushpraj](https://github.com/PushprajPatil) - Reported several issues between July and August 2024
 
 ### Repository overview 
 Below is the folder structure with a short explanation
