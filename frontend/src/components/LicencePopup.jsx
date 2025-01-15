@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import ReactGA from 'react-ga4';
 
 import theme from "../theme.jsx";
-import { useTheme } from "@mui/styles";
 import countries from "../components/Countries.jsx";
 import {
     Box,
@@ -25,6 +24,7 @@ import {
     DialogActions,
     CardContent,
     ButtonGroup,
+    DialogContentText,
 } from "@mui/material";
 
 import { useNavigate, Link } from "react-router-dom";
@@ -43,19 +43,17 @@ import {
 
 import { typecost, typecost_single, } from "../views/HandlePaymentNew.jsx";
 import { handlePayasyougo } from "../views/HandlePaymentNew.jsx"
+import Billing from "./Billing.jsx";
 
 const LicencePopup = (props) => {
-    const { globalUrl, userdata, serverside, billingInfo, stripeKey, setModalOpen, isLoggedIn, isMobile } = props;
+    const { globalUrl, userdata, serverside, billingInfo, stripeKey, setModalOpen, isLoggedIn, isMobile, selectedOrganization, isCloud } = props;
     //const alert = useAlert();
     let navigate = useNavigate();
-    const isCloud = typeof window === 'undefined' || window === undefined || window.location === undefined ? true : window.location.host === "localhost:3002" || window.location.host === "shuffler.io";
-
     const [selectedDealModalOpen, setSelectedDealModalOpen] = React.useState(false);
     const [dealList, setDealList] = React.useState([]);
     const [dealName, setDealName] = React.useState("");
     const [dealAddress, setDealAddress] = React.useState("");
     const [dealType, setDealType] = React.useState("MSSP");
-    const [selectedOrganization, setSelectedOrganization] = React.useState({});
     const [dealCountry, setDealCountry] = React.useState("United States");
     const [dealCurrency, setDealCurrency] = React.useState("USD");
     const [dealStatus, setDealStatus] = React.useState("initiated");
@@ -64,8 +62,8 @@ const LicencePopup = (props) => {
     const [dealerror, setDealerror] = React.useState("");
     const [variant, setVariant] = useState(0)
     const [shuffleVariant, setShuffleVariant] = useState(isCloud ? 0 : 1)
-
-
+    const [BillingEmail, setBillingEmail] = useState(selectedOrganization?.Billing?.Email);
+    const [openChangeEmailBox, setOpenChangeEmailBox] = useState(false);
     // const parsedFields = maxFields === undefined ? 300 : maxFields
     const initialShuffleVariant = isCloud ? 0 : 1;
     const [paymentType, setPaymentType] = useState(0)
@@ -79,6 +77,12 @@ const LicencePopup = (props) => {
     const [calculatedCost, setCalculatedCost] = useState("$600")
     const [selectedValue, setSelectedValue] = useState(100)
 
+    useEffect(() => {
+        if(selectedOrganization?.Billing?.Email !== BillingEmail) {
+            setBillingEmail(selectedOrganization?.Billing?.Email);
+        }
+    }, [selectedOrganization])
+
     // Onprem
     const [calculatedCores, setCalculatedCores] = useState('600')
     const [onpremSelectedValue, setOnpremSelectedValue] = useState(8)
@@ -88,8 +92,8 @@ const LicencePopup = (props) => {
 
     const paperStyle = {
         padding: 20,
-        borderRadius: theme.palette.borderRadius,
-        height: "100%",
+        borderRadius: theme.palette?.borderRadius,
+        height: "100%"
     }
 
     billingInfo.subscription = {
@@ -102,7 +106,8 @@ const LicencePopup = (props) => {
         "description": "Pay as you go",
         "features": [
             "Basic Support",
-            "Limited App Runs (10.000)",
+            "Includes 10.000 app run/month for free. ",
+            "Pay for what you use with no minimum commitment and cancel anytime."
         ],
         "limit": 10000,
     }
@@ -138,13 +143,14 @@ const LicencePopup = (props) => {
             })
     }
 
+
     const SubscriptionObject = (props) => {
         const { globalUrl, index, userdata, serverside, billingInfo, stripeKey, selectedOrganization, handleGetOrg, subscription, highlight, } = props;
 
         const [signatureOpen, setSignatureOpen] = React.useState(false);
         const [tosChecked, setTosChecked] = React.useState(subscription.eula_signed)
         const [hovered, setHovered] = React.useState(false)
-
+        const [newBillingEmail, setNewBillingEmail] = useState('');
         var top_text = "Base Cloud Access"
         if (subscription.limit === undefined && subscription.level === undefined || subscription.level === null || subscription.level === 0) {
             subscription.name = "Enterprise"
@@ -192,9 +198,61 @@ const LicencePopup = (props) => {
             // newPaperstyle.border = "1px solid #f85a3e"
         }
 
+        const handleClickOpen = () => {
+			setOpenChangeEmailBox(true);
+		};
+
+        const HandleChangeBillingEmail = (orgId) => {
+            const email = newBillingEmail;
+            const emailPattern = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}$/;
+            if (!emailPattern.test(email)) {
+                toast("Please enter a valid email address");
+                return;
+            } else {
+                setNewBillingEmail(email);
+            }
+    
+            toast("Updating billing email. Please Wait")
+    
+            const data = {
+                org_id: orgId,
+                email: newBillingEmail,
+                billing: {
+                    email: newBillingEmail,
+                },
+            };
+    
+            const url = `${globalUrl}/api/v1/orgs/${orgId}/billing`;
+            fetch(url, {
+                method: "POST",
+                body: JSON.stringify(data),
+                credentials: "include",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+            })
+                .then((response) => {
+                    if (response.status !== 200) {
+                        console.log("Bad status code in get org:", response.status);
+                    }
+                    return response.json();
+                }).then((responseJson) => {
+                    if (responseJson.success === true) {
+                        toast.success("Successfully updated billing email");
+                        setBillingEmail(newBillingEmail);
+                        setOpenChangeEmailBox(false);
+                    } else {
+                        toast.error("Failed to update billing email. Please try again.");
+                    }
+                })
+                .catch((error) => {
+                    console.log("Error getting org:", error);
+                });
+        }
+
         return (
             <Tooltip
-                style={{ borderRadius: theme.palette.borderRadius, }}
+                style={{ borderRadius: theme.palette?.borderRadius, }}
                 placement="bottom"
             >
                 <div style={{}}>
@@ -309,7 +367,7 @@ const LicencePopup = (props) => {
                                     color="primary"
                                 />
                                 : null}
-                            <Typography variant="h6" style={{ marginTop: 10, marginBottom: 10, flex: 5, }}>
+                            <Typography variant="h6" style={{ marginTop: 10, marginBottom: 10, flex: 5, whiteSpace: 'nowrap' }}>
                                 {top_text}
                             </Typography>
 
@@ -320,7 +378,7 @@ const LicencePopup = (props) => {
                                         margin: "auto",
                                         width: 100,
                                         backgroundColor: "white",
-                                        // borderRadius: theme.palette.borderRadius,
+                                        // borderRadius: theme.palette?.borderRadius,
                                     }}
                                 />
                                 : null}
@@ -344,7 +402,7 @@ const LicencePopup = (props) => {
                         </div>
                         <Divider />
                         <div>
-                            <Typography variant="body1" style={{ marginTop: 20, }}>
+                            <Typography variant="body1" style={{ marginTop: 20,whiteSpace: 'nowrap'  }}>
                                 {subscription.name}
                             </Typography>
 
@@ -390,7 +448,7 @@ const LicencePopup = (props) => {
                                                         value={feature.split("Worker License: ")[1]}
                                                         style={{
                                                             // backgroundColor: theme.palette.inputColor,
-                                                            // borderRadius: theme.palette.borderRadius,
+                                                            // borderRadius: theme.palette?.borderRadius,
                                                         }}
                                                         id={fieldId}
                                                         onClick={() => { }}
@@ -444,21 +502,142 @@ const LicencePopup = (props) => {
                                     })
                                     : null}
                             </ul>
-							{isCloud ? 
-                            	<span>Billing email: {selectedOrganization.org}</span>
+                            <Typography variant="body2" color="textSecondary" style={{ marginTop: 20, marginBottom: 10 }}>
+							{subscription.name.includes("Scale") ?
+								""
+								:
+
+								userdata.has_card_available === true ?
+									"While you have a card attached to your account, Shuffle will no longer prevent workflows from running. Billing will occur at the start of each month."
+									:
+									isCloud ?
+										`You are not subscribed to any plan and are using the free plan with max 10,000 app runs per month. Upgrade to deactivate this limit.`
+										:
+										`You are not subscribed to any plan and are using the free, open source plan. This plan has no enforced limits, but scale issues may occur due to CPU congestion.`
+							}
+						</Typography>
+							{isCloud && (userdata.has_card_available === true || selectedOrganization?.Billing?.Email?.length > 0 )? 
+                            	<div>
+                                    <span>Billing email: {BillingEmail}</span>
+                                    <Button
+                                        variant="contained"
+                                        onClick={handleClickOpen}
+                                        style={{
+                                            width: 'auto',
+                                            height: 20,
+                                            textTransform: 'none',
+                                            marginLeft: 'auto',
+                                            backgroundColor: 'transparent',
+                                            color: '#FF8544',
+                                            boxShadow: 'none',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            transition: 'background-color 0.3s, color 0.3s',
+                                        }}
+                                    >
+                                        Change
+                                    </Button>
+                                    <Dialog
+								open={openChangeEmailBox}
+								onClose={()=> {setOpenChangeEmailBox(false)}}
+								PaperProps={{
+                                    sx: {
+                                      borderRadius: theme?.palette?.DialogStyle?.borderRadius,
+                                      border: theme?.palette?.DialogStyle?.border,
+                                      minWidth: '440px',
+                                      fontFamily: theme?.typography?.fontFamily,
+                                      backgroundColor: theme?.palette?.DialogStyle?.backgroundColor,
+                                      zIndex: 1000,
+                                      '& .MuiDialogContent-root': {
+                                        backgroundColor: theme?.palette?.DialogStyle?.backgroundColor,
+                                      },
+                                      '& .MuiDialogTitle-root': {
+                                        backgroundColor: theme?.palette?.DialogStyle?.backgroundColor,
+                                      },
+                                      '& .MuiDialogActions-root': {
+                                        backgroundColor: theme?.palette?.DialogStyle?.backgroundColor,
+                                        },
+                                    }
+                                  }}
+							>
+								<DialogTitle style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Change Billing Email</DialogTitle>
+								<DialogContent>
+									<DialogContentText style={{ marginBottom: '20px', fontSize: 16, }}>
+										Enter the new billing email address.
+									</DialogContentText>
+									<TextField
+										autoFocus
+										margin="dense"
+										id="email"
+										label="New Billing Email"
+										type="email"
+										fullWidth
+										value={newBillingEmail}
+										onKeyPress={(event) => { if (event.key === 'Enter') HandleChangeBillingEmail(selectedOrganization.id) }}
+										onChange={(e) => setNewBillingEmail(e.target.value)}
+									/>
+								</DialogContent>
+								<DialogActions>
+									<Button
+										onClick={()=> {setOpenChangeEmailBox(false)}}
+										color="primary"
+										style={{ textTransform: 'none', marginRight: '10px' }}
+									>
+										Cancel
+									</Button>
+									<Button
+										style={{ textTransform: 'none', backgroundColor: "#ff8544", color: "#1a1a1a" }}
+										onClick={(event) => HandleChangeBillingEmail(selectedOrganization.id)}
+									>
+										Save
+									</Button>
+								</DialogActions>
+							</Dialog>
+                                </div>
 							: null}
                         </div>
+                        {isCloud ? (
+                            <Button
+							fullWidth
+							disabled={false}
+							color="primary"
+							style={{
+								marginTop: !userdata.has_card_available ? 20 : 10,
+								borderRadius: 4,
+								height: 40,
+								fontSize: 16,
+								color: "#1a1a1a",
+								backgroundColor: "#ff8544",
+								// backgroundImage: userdata.has_card_available ? null : "linear-gradient(to right, #f86a3e, #f34079)",
+								textTransform: "none",
 
-                        <Button
+							}}
+							onClick={() => {
+								if (isCloud) {
+									handlePayasyougo(userdata, selectedOrganization, BillingEmail)
+									//navigate("/pricing?tab=cloud&highlight=true")
+								} else {
+									//window.open("https://shuffler.io/pricing?tab=onprem&highlight=true", "_blank")
+									handlePayasyougo()
+								}
+							}}
+						>
+							{userdata.has_card_available === true ?
+								"Manage Card Details"
+								:
+								"Add Card Details"
+							}
+						</Button> ) : null}
+                            <Button
+                            variant="outlined"
                             style={{
-                                marginLeft: 115,
-                                marginTop: 50,
-                                borderRadius: 20,
-                                width: 120,
-                                color: "#FFFFFF",
+                                marginTop: isCloud? 10 : 30,
+                                borderRadius: 4,
+                                width: "100%",
                                 cursor: "pointer",
                                 textTransform: "capitalize",
                                 backgroundColor: "transparent",
+                                fontSize: 16,
                                 position: "relative", // Required for positioning tooltip
                             }}
                             title="Click to book a call"
@@ -477,7 +656,7 @@ const LicencePopup = (props) => {
                                 // }
                             }}
                         >
-							<span style={{color: "#f85a3e",}}>
+							<span>
                             	Book a call
 							</span>
                             <span
@@ -499,8 +678,7 @@ const LicencePopup = (props) => {
                                 Click to book a call
                             </span>
                         </Button>
-
-
+                        
                     </Paper>
                     {/*
 			<div style={{ paddingRight: 150, display: "flex", alignItems: "baseline" }}>
@@ -515,16 +693,16 @@ const LicencePopup = (props) => {
     }
 
     useEffect(() => {
-        console.log("New variant: ", shuffleVariant)
+		console.log("New variant: ", shuffleVariant)
 
-        if (shuffleVariant === 1) {
-            setCalculatedCost("$600")
-            setSelectedValue(8)
-        } else {
-            setCalculatedCost("$540")
-            setSelectedValue(300)
-        }
-    }, [shuffleVariant])
+		if (shuffleVariant === 1) {
+			setCalculatedCost("$960")
+			setSelectedValue(8)
+		} else {
+			setCalculatedCost("$960")
+			setSelectedValue(300)
+		}
+	}, [shuffleVariant])
 
     if (typeof window === 'undefined' || window.location === undefined) {
         return null
@@ -548,14 +726,13 @@ const LicencePopup = (props) => {
     }
 
     const handleChange = (event, newValue) => {
-        console.log("Event, value: ", event.target, newValue)
 
         if (shuffleVariant === 1) {
             setSelectedValue(newValue)
             if (newValue === 32) {
                 setCalculatedCost(`Get A Quote`)
             } else {
-                setCalculatedCost(`$${newValue * 75}`)
+                setCalculatedCost(`$${newValue * 120}`)
             }
         } else {
             setSelectedValue(newValue)
@@ -680,7 +857,7 @@ const LicencePopup = (props) => {
         color: "white",
     }
 
-
+    console.log("Priceitem: ", shuffleVariant)
     const isLoggedInHandler = () => {
         if (calculatedCost === payasyougo) {
             handlePayasyougo(props.userdata)
@@ -690,7 +867,7 @@ const LicencePopup = (props) => {
         const priceItem = window.location.origin === "https://shuffler.io" ?
             shuffleVariant === 0 ? "app_executions" : "cores"
             :
-            shuffleVariant === 0 ? "price_1MROFrDzMUgUjxHShcSxgHO1" : "price_1NXjQqDzMUgUjxHSg690R4FP"
+            shuffleVariant === 0 ? "price_1PZPSSEJjT17t98NLJoTMYja" : "price_1PZPQuEJjT17t98N3yORUtd9"
 
         const successUrl = `${window.location.origin}/admin?admin_tab=billing&payment=success`
         const failUrl = `${window.location.origin}/pricing?admin_tab=billing&payment=failure`
@@ -737,7 +914,7 @@ const LicencePopup = (props) => {
 
     return (
         <div>
-            <Grid container spacing={2} columns={16} style={{ flexDirection: "row", flexWrap: "nowrap", borderRadius: '16px', display: "flex" }}>
+            <Grid container spacing={2} columns={16} style={{ flexDirection: "row", flexWrap: "nowrap", borderRadius: '16px', display: "flex", }}>
                 <Grid item xs={8}>
                     {isCloud && billingInfo.subscription !== undefined && billingInfo.subscription !== null ?
                         <SubscriptionObject
@@ -824,7 +1001,7 @@ const LicencePopup = (props) => {
                         {errorMessage.length > 0 ? <Typography variant="h4">Error: {errorMessage}</Typography> : null}
                         <Card style={{
                             padding: 20,
-                            borderRadius: theme.palette.borderRadius,
+                            borderRadius: theme.palette?.borderRadius,
                             border: "1px solid #f85a3e",
                         }}>
                             <div>
@@ -896,13 +1073,11 @@ const LicencePopup = (props) => {
                                 </div>
                             </div>
                             <div style={{ marginTop: 20, }} />
-                        </Card>
-                    </Grid>
-                </Grid>
-            </Grid>
-            <DialogActions style={{ marginTop: 15 }} >
+                            <DialogActions style={{ marginTop: 15 }} >
+                <div style={{display: 'flex', flexDirection: 'column', width: "100%", justifyContent: 'space-between', gap: "10px"}}>
                 <Button
-                    style={{ borderRadius: "0px", textTransform: "capitalize" }}
+                    style={{ borderRadius: "4px", textTransform: "capitalize",  width: "100%", fontSize: 16}}
+                    variant="outlined"
                     onClick={() => {
                         if (isCloud) {
 							ReactGA.event({
@@ -915,7 +1090,6 @@ const LicencePopup = (props) => {
 						} else {
 							window.open("https://shuffler.io/pricing?tab=onprem", "_blank")
 						}
-                        setModalOpen(false)
                     }}
                     color="primary"
                 >
@@ -923,7 +1097,7 @@ const LicencePopup = (props) => {
                 </Button>
                 <Button
                     variant="contained"
-                    style={{ borderRadius: 20, width: 120, textTransform: "capitalize" }}
+                    style={{ borderRadius: 4, textTransform: "capitalize", color: "#1a1a1a", backgroundColor: "#ff8544", width: "100%", fontSize: 16}}
                     onClick={() => {
                         if (isCloud) {
 							ReactGA.event({
@@ -949,7 +1123,12 @@ const LicencePopup = (props) => {
                 >
                     Upgrade
                 </Button>
+                </div>
             </DialogActions>
+                        </Card>
+                    </Grid>
+                </Grid>
+            </Grid> 
         </div>
     )
 }

@@ -86,11 +86,9 @@ const MFASetup = ({ isLoaded, globalUrl, setCookie }) => {
                     toast("Wrong code sent. Please try again.");
                     return;
                 }
-                console.log("response", response);
                 return response.json();
             })
             .then((responseJson) => {
-                console.log("responseJson", responseJson)
                 if (responseJson.success === true) {
                     toast.success("Successfully setup 2fa. Redirecting in 3 seconds...");
                     for (var key in responseJson["cookies"]) {
@@ -129,7 +127,7 @@ const MFASetup = ({ isLoaded, globalUrl, setCookie }) => {
     };
 
     return (
-        <div style={{ margin: "50px auto", width: "500px" }}>
+        <div style={{ paddingTop: 50, margin: "0px auto", width: "500px" }}>
             <Paper elevation={3} style={{ padding: "30px", backgroundColor: "#212121" }}>
                 <Typography variant="h5" style={{ color: "white", marginBottom: 10, textAlign: "center" }}>
                     Multi-Factor Authentication Setup
