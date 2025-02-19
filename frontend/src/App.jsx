@@ -184,6 +184,7 @@ const App = (message, props) => {
           color: "rgba(255, 255, 255, 0.65)",
           minHeight: "100vh",
         }}
+		className='parent-component'
       >
         <ScrollToTop
           getUserNotifications={getUserNotifications}
@@ -474,7 +475,7 @@ const App = (message, props) => {
 			/>
         	<Route
         	  exact
-        	  path="/workflows"
+        	  path="/workflows2"
         	  element={
         	    <Workflows
 				  checkLogin={checkLogin}
@@ -491,7 +492,7 @@ const App = (message, props) => {
         	/>
 			<Route
         	  exact
-        	  path="/workflows2"
+        	  path="/workflows"
         	  element={
         	    <Workflows2
 				  checkLogin={checkLogin}

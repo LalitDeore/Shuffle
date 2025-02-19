@@ -296,6 +296,7 @@ const EditWorkflow = (props) => {
 				}}>
 					<Button
 						variant="contained"
+						id="save_workflow_button"
 						style={{}}
 						disabled={name.length === 0 || submitLoading === true}
 						onClick={() => {
@@ -389,6 +390,7 @@ const EditWorkflow = (props) => {
 								},
 							}}
 							color="primary"
+							id="Enter-Workflow-Name"
 							placeholder="Name"
 							required
 							margin="dense"

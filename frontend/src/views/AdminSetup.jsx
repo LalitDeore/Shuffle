@@ -208,6 +208,7 @@ const AdminAccount = (props) => {
               type="submit"
               style={{ flex: "1", marginRight: "5px" }}
               disabled={!handleValidateForm() || loginLoading}
+              id="signupButton"
             >
               {loginLoading ? (
                 <CircularProgress

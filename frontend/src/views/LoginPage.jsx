@@ -473,6 +473,7 @@ const LoginDialog = (props) => {
                 color="primary"
                 variant="contained"
                 type="submit"
+                id="loginButton"
                 style={{ flex: "1" }}
                 disabled={!handleValidateForm() || loginLoading}
               >
