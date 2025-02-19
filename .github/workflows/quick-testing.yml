@@ -26,9 +26,9 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y docker-compose
-    
+
     - name: Set up opensearch directory
-      run: mkdir shuffle-database && chmod -R 777 shuffle-database
+      run: mkdir -p shuffle-database && chmod -R 777 shuffle-database
 
     - name: Build the stack
       run: docker-compose up -d
