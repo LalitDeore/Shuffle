@@ -92,3 +92,9 @@ fi
 
 kill $SERVER_PID
 echo "Testing complete. See above logs for errors if any."
+
+# Starting frontend container
+echo "Starting shuffle-frontend container..."
+docker start shuffle-frontend
+echo "shuffle-frontend started successfully."
+exit 0
