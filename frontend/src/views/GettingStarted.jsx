@@ -1,9 +1,9 @@
 import React, { useEffect, useContext } from "react";
 import { makeStyles } from "@mui/styles";
 
-import ReactGA from 'react-ga4';
-import SecurityFramework from '../components/SecurityFramework.jsx';
-import theme from '../theme.jsx';
+import ReactGA from "react-ga4";
+import SecurityFramework from "../components/SecurityFramework.jsx";
+import theme from "../theme.jsx";
 
 import {
   Badge,
@@ -31,7 +31,7 @@ import {
 } from "@mui/material";
 
 import {
-	Check as CheckIcon,
+  Check as CheckIcon,
   GridOn as GridOnIcon,
   List as ListIcon,
   Close as CloseIcon,
@@ -58,7 +58,6 @@ import {
   CloudDownload as CloudDownloadIcon,
 } from "@mui/icons-material";
 
-
 import { DataGrid, GridToolbar } from "@mui/x-data-grid";
 
 //import JSONPretty from 'react-json-pretty';
@@ -67,7 +66,7 @@ import Dropzone from "../components/Dropzone.jsx";
 
 import { useNavigate, Link, useParams } from "react-router-dom";
 //import { useAlert
-import { ToastContainer, toast } from "react-toastify" 
+import { ToastContainer, toast } from "react-toastify";
 import { MuiChipsInput } from "mui-chips-input";
 import { v4 as uuidv4 } from "uuid";
 
@@ -81,7 +80,9 @@ const useStyles = makeStyles((theme) => ({
     border: 0,
     "& .MuiDataGrid-columnsContainer": {
       backgroundColor:
-        theme?.palette?.type === "light" ? "#fafafa" : theme?.palette?.inputColor,
+        theme?.palette?.type === "light"
+          ? "#fafafa"
+          : theme?.palette?.inputColor,
     },
     "& .MuiDataGrid-iconSeparator": {
       display: "none",
@@ -108,7 +109,6 @@ const useStyles = makeStyles((theme) => ({
   },
 }));
 
-  
 const chipStyle = {
   backgroundColor: "#3d3f43",
   marginRight: 5,
@@ -126,11 +126,10 @@ const GettingStarted = (props) => {
   document.title = "Getting Started with Shuffle";
   //const alert = useAlert();
   const classes = useStyles(theme);
-	let navigate = useNavigate();
+  let navigate = useNavigate();
   const imgSize = 60;
 
   const referenceUrl = globalUrl + "/api/v1/hooks/";
-
 
   var upload = "";
 
@@ -145,9 +144,10 @@ const GettingStarted = (props) => {
   const [downloadUrl, setDownloadUrl] = React.useState(
     "https://github.com/frikky/shuffle-workflows"
   );
-  const [videoViewOpen, setVideoViewOpen] = React.useState(false)
+  const [videoViewOpen, setVideoViewOpen] = React.useState(false);
   const [downloadBranch, setDownloadBranch] = React.useState("master");
-  const [loadWorkflowsModalOpen, setLoadWorkflowsModalOpen] = React.useState(false);
+  const [loadWorkflowsModalOpen, setLoadWorkflowsModalOpen] =
+    React.useState(false);
   const [exportModalOpen, setExportModalOpen] = React.useState(false);
   const [exportData, setExportData] = React.useState("");
 
@@ -552,12 +552,12 @@ const GettingStarted = (props) => {
 
           setFilteredWorkflows(responseJson);
           setWorkflowDone(true);
-  
-					// Ensures the zooming happens only once per load
-        	setTimeout(() => {
-						setFirstLoad(false)
-						setVideoViewOpen(true)
-					}, 100)
+
+          // Ensures the zooming happens only once per load
+          setTimeout(() => {
+            setFirstLoad(false);
+            setVideoViewOpen(true);
+          }, 100);
         } else {
           if (isLoggedIn) {
             toast("An error occurred while loading workflows");
@@ -567,7 +567,7 @@ const GettingStarted = (props) => {
         }
       })
       .catch((error) => {
-				setVideoViewOpen(true)
+        setVideoViewOpen(true);
 
         toast(error.toString());
       });
@@ -584,7 +584,7 @@ const GettingStarted = (props) => {
       //setFirstrequest(false);
       getAvailableWorkflows();
     }
-  }, [])
+  }, []);
 
   const viewStyle = {
     color: "#ffffff",
@@ -850,9 +850,7 @@ const GettingStarted = (props) => {
           if (isCloud) {
             toast("Successfully published workflow");
           } else {
-            toast(
-              "Successfully published workflow to https://shuffler.io"
-            );
+            toast("Successfully published workflow to https://shuffler.io");
           }
         }
 
@@ -1173,7 +1171,7 @@ const GettingStarted = (props) => {
     }
 
     return (
-			<div style={{width: "100%", position: "relative",}}>
+      <div style={{ width: "100%", position: "relative" }}>
         <Paper square style={paperAppStyle}>
           <div
             style={{
@@ -1360,25 +1358,25 @@ const GettingStarted = (props) => {
                   })
                 : null}
             </Grid>
-          {data.actions !== undefined && data.actions !== null ? (
-						<div style={{position: "absolute", top: 10, right: 10, }}>
-							<IconButton
-								aria-label="more"
-								aria-controls="long-menu"
-								aria-haspopup="true"
-								onClick={menuClick}
-								style={{ padding: "0px", color: "#979797" }}
-							>
-								<MoreVertIcon />
-							</IconButton>
-							{workflowMenuButtons}
-						</div>
-          ) : null}
-				</Grid>
-			</Paper>
-		</div>
-  )
-  }
+            {data.actions !== undefined && data.actions !== null ? (
+              <div style={{ position: "absolute", top: 10, right: 10 }}>
+                <IconButton
+                  aria-label="more"
+                  aria-controls="long-menu"
+                  aria-haspopup="true"
+                  onClick={menuClick}
+                  style={{ padding: "0px", color: "#979797" }}
+                >
+                  <MoreVertIcon />
+                </IconButton>
+                {workflowMenuButtons}
+              </div>
+            ) : null}
+          </Grid>
+        </Paper>
+      </div>
+    );
+  };
 
   // Can create and set workflows
   const setNewWorkflow = (
@@ -1433,15 +1431,15 @@ const GettingStarted = (props) => {
         return response.json();
       })
       .then((responseJson) => {
-				if (responseJson.success === false) {
-					if (responseJson.reason !== undefined) {
-						toast("Error setting workflow: ", responseJson.reason)
-					} else {
-						toast("Error setting workflow.")
-					}
+        if (responseJson.success === false) {
+          if (responseJson.reason !== undefined) {
+            toast("Error setting workflow: ", responseJson.reason);
+          } else {
+            toast("Error setting workflow.");
+          }
 
-					return
-				}
+          return;
+        }
 
         if (method === "POST" && redirect) {
           window.location.pathname = "/workflows/" + responseJson["id"];
@@ -1478,7 +1476,7 @@ const GettingStarted = (props) => {
         if (file.type !== "application/json") {
           if (file.type !== undefined) {
             toast("File has to contain valid json");
-    				setImportLoading(false);
+            setImportLoading(false);
           }
 
           continue;
@@ -1846,7 +1844,7 @@ const GettingStarted = (props) => {
         };
 
         return obj;
-      })
+      });
 
       workflowData = (
         <DataGrid
@@ -2029,7 +2027,6 @@ const GettingStarted = (props) => {
     executionResults: 4,
   };
 
-
   if (viewSize.workflowView === 0) {
     workflowViewStyle.display = "none";
   }
@@ -2120,250 +2117,355 @@ const GettingStarted = (props) => {
     </span>
   );
 
-
-	const workflowViewStyle = {
-		flex: viewSize.workflowView,
-		margin: "auto",
-		marginTop: 25,
-		textAlign: "center",
-		maxWidth: 600,
-	};
-
+  const workflowViewStyle = {
+    flex: viewSize.workflowView,
+    margin: "auto",
+    marginTop: 25,
+    textAlign: "center",
+    maxWidth: 600,
+  };
 
   const WorkflowView = () => {
-		var workflowDelay = -150
-		var appDelay = -75	
+    var workflowDelay = -150;
+    var appDelay = -75;
 
-		const textSpacingDiff = 8
-		const textType = "body2"
-						
-		// Discover <a target="_blank" href="https://shuffler.io/search?tab=workflows" style={{textDecoration: "none", color: "#f86a3e",}}>use-cases made by us and other creators</a>!
-		const steps = [
-			{
-				html: (
-					<Typography variant={textType} style={{marginTop: textSpacingDiff, textAlign: "left",}} onClick={() => {
-						if (isCloud) {
-							ReactGA.event({
-								category: "getting-started",
-								action: `integerations_find_click`,
-							})
-						}
-					}}>
-						<Link to="/welcome?tab=2" style={{textDecoration: "none", color: "#f86a3e",}}>Find relevant apps</Link> and start your automation journey
-					</Typography>
-				), 
-				tutorial: "find_integrations",
-			},
-			{
-				html: 
-					<Typography variant={textType} style={{marginTop: textSpacingDiff, textAlign: "left",}}>
-							Discover <Link to="/welcome?tab=3" style={{cursor: "pointer", textDecoration: "none", color: "#f86a3e",}}>Use-Case ideas</Link> and&nbsp;
-							<span style={{cursor: "pointer", textDecoration: "none", color: "#f86a3e",}} onClick={() => {
-    
-  						if (isCloud) {
-								navigate(`/search?tab=workflows`)
+    const textSpacingDiff = 8;
+    const textType = "body2";
 
-								ReactGA.event({
-									category: "getting-started",
-									action: `workflow_find_click`,
-								})
-								return
-							} else {
-								toast("TBD: Coming in version 1.0.0");
-							}
+    // Discover <a target="_blank" href="https://shuffler.io/search?tab=workflows" style={{textDecoration: "none", color: "#f86a3e",}}>use-cases made by us and other creators</a>!
+    const steps = [
+      {
+        html: (
+          <Typography
+            variant={textType}
+            style={{ marginTop: textSpacingDiff, textAlign: "left" }}
+            onClick={() => {
+              if (isCloud) {
+                ReactGA.event({
+                  category: "getting-started",
+                  action: `integerations_find_click`,
+                });
+              }
+            }}
+          >
+            <Link
+              to="/welcome?tab=2"
+              style={{ textDecoration: "none", color: "#f86a3e" }}
+            >
+              Find relevant apps
+            </Link>{" "}
+            and start your automation journey
+          </Typography>
+        ),
+        tutorial: "find_integrations",
+      },
+      {
+        html: (
+          <Typography
+            variant={textType}
+            style={{ marginTop: textSpacingDiff, textAlign: "left" }}
+          >
+            Discover{" "}
+            <Link
+              to="/welcome?tab=3"
+              style={{
+                cursor: "pointer",
+                textDecoration: "none",
+                color: "#f86a3e",
+              }}
+            >
+              Use-Case ideas
+            </Link>{" "}
+            and&nbsp;
+            <span
+              style={{
+                cursor: "pointer",
+                textDecoration: "none",
+                color: "#f86a3e",
+              }}
+              onClick={() => {
+                if (isCloud) {
+                  navigate(`/search?tab=workflows`);
 
-							const ele = document.getElementById("shuffle_search_field")
-							if (ele !== undefined && ele !== null) {
-								console.log("Found ele: ", ele)
-								ele.focus()
-								ele.style.borderColor = "#f86a3e"
-								ele.style.borderWidth = "2px"
+                  ReactGA.event({
+                    category: "getting-started",
+                    action: `workflow_find_click`,
+                  });
+                  return;
+                } else {
+                  toast("TBD: Coming in version 1.0.0");
+                }
 
-							} else {
-								//toast("TBD: Coming in version 1.0.0");
-							}
-						}}>
-						workflows made by other creators</span>!
-					</Typography>,
-				tutorial: "discover_workflows",
-			},
-			{
-				html: (
-					<Typography variant={textType} style={{marginTop: textSpacingDiff, textAlign: "left",}} onClick={() => {
-						if (isCloud) {
-							ReactGA.event({
-								category: "getting-started",
-								action: `create_workflow_click`,
-							})
-						}
-					}}>
-						Learn to use Shuffle by&nbsp; 
-						<span style={{cursor: "pointer", color: "#f86a3e",}} onClick={() => {setModalOpen(true)}}>
-							creating your first workflow 
-						</span> and <Link to="/docs/getting_started" style={{textDecoration: "none", color: "#f86a3e",}}>reading the docs.</Link>
-					</Typography>
-				),
-				tutorial: "learn_shuffle",
-			},
-			{
-				html: 
-					<Typography variant={textType} style={{marginTop: textSpacingDiff, textAlign: "left",}}>
-						Configure your organization name <Link to="/admin" style={{textDecoration: "none", color: "#f86a3e",}}>in the admin panel</Link> and <Link to="/admin?tab=users" style={{textDecoration: "none", color: "#f86a3e",}}>invite your team</Link>
-					</Typography>,
-				tutorial: "configure_organization",
-			}
-		]
-	
+                const ele = document.getElementById("shuffle_search_field");
+                if (ele !== undefined && ele !== null) {
+                  console.log("Found ele: ", ele);
+                  ele.focus();
+                  ele.style.borderColor = "#f86a3e";
+                  ele.style.borderWidth = "2px";
+                } else {
+                  //toast("TBD: Coming in version 1.0.0");
+                }
+              }}
+            >
+              workflows made by other creators
+            </span>
+            !
+          </Typography>
+        ),
+        tutorial: "discover_workflows",
+      },
+      {
+        html: (
+          <Typography
+            variant={textType}
+            style={{ marginTop: textSpacingDiff, textAlign: "left" }}
+            onClick={() => {
+              if (isCloud) {
+                ReactGA.event({
+                  category: "getting-started",
+                  action: `create_workflow_click`,
+                });
+              }
+            }}
+          >
+            Learn to use Shuffle by&nbsp;
+            <span
+              style={{ cursor: "pointer", color: "#f86a3e" }}
+              onClick={() => {
+                setModalOpen(true);
+              }}
+            >
+              creating your first workflow
+            </span>{" "}
+            and{" "}
+            <Link
+              to="/docs/getting_started"
+              style={{ textDecoration: "none", color: "#f86a3e" }}
+            >
+              reading the docs.
+            </Link>
+          </Typography>
+        ),
+        tutorial: "learn_shuffle",
+      },
+      {
+        html: (
+          <Typography
+            variant={textType}
+            style={{ marginTop: textSpacingDiff, textAlign: "left" }}
+          >
+            Configure your organization name{" "}
+            <Link
+              to="/admin"
+              style={{ textDecoration: "none", color: "#f86a3e" }}
+            >
+              in the admin panel
+            </Link>{" "}
+            and{" "}
+            <Link
+              to="/admin?tab=users"
+              style={{ textDecoration: "none", color: "#f86a3e" }}
+            >
+              invite your team
+            </Link>
+          </Typography>
+        ),
+        tutorial: "configure_organization",
+      },
+    ];
+
     return (
       <div style={viewStyle}>
-				<Dialog
-					open={videoViewOpen}
-					onClose={() => {
-						setVideoViewOpen(false)
-					}}
-					PaperProps={{
-						style: {
-							backgroundColor: surfaceColor,
-							color: "white",
-							minWidth: 560,
-							minHeight: 415,
-							textAlign: "center",
-						},
-					}}
-				>
-					<DialogTitle>
-						Welcome to Shuffle!	
-					</DialogTitle>
+        <Dialog
+          open={videoViewOpen}
+          onClose={() => {
+            setVideoViewOpen(false);
+          }}
+          PaperProps={{
+            style: {
+              backgroundColor: surfaceColor,
+              color: "white",
+              minWidth: 560,
+              minHeight: 415,
+              textAlign: "center",
+            },
+          }}
+        >
+          <DialogTitle>Welcome to Shuffle!</DialogTitle>
 
-					<Tooltip
-						title="Close window"
-						placement="top"
-						style={{ zIndex: 10011 }}
-					>
-						<IconButton
-							style={{ zIndex: 5000, position: "absolute", top: 10, right: 34 }}
-							onClick={(e) => {
-								e.preventDefault();
-								setVideoViewOpen(false)
-							}}
-						>
-							<CloseIcon style={{ color: "white" }} />
-						</IconButton>
-					</Tooltip>
+          <Tooltip
+            title="Close window"
+            placement="top"
+            style={{ zIndex: 10011 }}
+          >
+            <IconButton
+              style={{ zIndex: 5000, position: "absolute", top: 10, right: 34 }}
+              onClick={(e) => {
+                e.preventDefault();
+                setVideoViewOpen(false);
+              }}
+            >
+              <CloseIcon style={{ color: "white" }} />
+            </IconButton>
+          </Tooltip>
 
-					<iframe 
-						width="560"
-						height="315" 
-						style={{margin: "0px auto 0px auto", width: 560, height: 315,}}
-						src="https://www.youtube-nocookie.com/embed/rO7k9q3OgC0" 
-						title="Introduction video" 
-						frameborder="0"
-						allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-						allowfullscreen
-					>
-					</iframe>
-				</Dialog>
+          <iframe
+            width="560"
+            height="315"
+            style={{ margin: "0px auto 0px auto", width: 560, height: 315 }}
+            src="https://www.youtube-nocookie.com/embed/rO7k9q3OgC0"
+            title="Introduction video"
+            frameborder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowfullscreen
+          ></iframe>
+        </Dialog>
         <div style={workflowViewStyle}>
-					<Typography variant="h1" style={{fontSize: 30, marginTop: 25, }}>
-						Getting Started with Shuffle
-					</Typography>
-					<Typography variant="body2" color="textSecondary" style={{marginTop: 25}}>
-						We provide everything you need to automate your operations - apps, default workflows, security dashboards and analytics that work well together.
-					</Typography>
-					<Paper style={{backgroundColor: theme.palette.surfaceColor, border: "1px solid rgba(255,255,255,0.3)", padding: 40, marginTop: 25, }}>
-						{steps.map((data, index) => {
-							var tutorialFound = false
-							if (userdata.tutorials !== undefined && userdata.tutorials !== null && userdata.tutorials.length > 0 && data.tutorial !== undefined) {
-								const foundTutorial = userdata.tutorials.find(tutorial => tutorial === data.tutorial)
-								if (foundTutorial !== undefined && foundTutorial !== null) {
-									console.log("Found tutorial for ", data.tutorial)
-									tutorialFound = true 
-								}
+          <Typography variant="h1" style={{ fontSize: 30, marginTop: 25 }}>
+            Getting Started with Shuffle
+          </Typography>
+          <Typography
+            variant="body2"
+            color="textSecondary"
+            style={{ marginTop: 25 }}
+          >
+            We provide everything you need to automate your operations - apps,
+            default workflows, security dashboards and analytics that work well
+            together.
+          </Typography>
+          <Paper
+            style={{
+              backgroundColor: theme.palette.surfaceColor,
+              border: "1px solid rgba(255,255,255,0.3)",
+              padding: 40,
+              marginTop: 25,
+            }}
+          >
+            {steps.map((data, index) => {
+              var tutorialFound = false;
+              if (
+                userdata.tutorials !== undefined &&
+                userdata.tutorials !== null &&
+                userdata.tutorials.length > 0 &&
+                data.tutorial !== undefined
+              ) {
+                const foundTutorial = userdata.tutorials.find(
+                  (tutorial) => tutorial === data.tutorial
+                );
+                if (foundTutorial !== undefined && foundTutorial !== null) {
+                  console.log("Found tutorial for ", data.tutorial);
+                  tutorialFound = true;
+                }
 
-								if (tutorialFound === false) {
-									if (data.tutorial === "discover_workflows") {
-										if (workflows.length > 0) {
-											for (var key in workflows) {
-												const tmpworkflow = workflows[key]
-												if (tmpworkflow.published_id !== undefined && tmpworkflow.published_id !== null &&  tmpworkflow.published_id.length > 0) {
-													tutorialFound = true
-													break
-												}
-											}
-										}
-									}
+                if (tutorialFound === false) {
+                  if (data.tutorial === "discover_workflows") {
+                    if (workflows.length > 0) {
+                      for (var key in workflows) {
+                        const tmpworkflow = workflows[key];
+                        if (
+                          tmpworkflow.published_id !== undefined &&
+                          tmpworkflow.published_id !== null &&
+                          tmpworkflow.published_id.length > 0
+                        ) {
+                          tutorialFound = true;
+                          break;
+                        }
+                      }
+                    }
+                  }
 
-									if (data.tutorial === "learn_shuffle") {
-										//tutorial: "discover_workflows",
-										if (workflows.length > 0) {
-											tutorialFound = true
-										}
-									}
+                  if (data.tutorial === "learn_shuffle") {
+                    //tutorial: "discover_workflows",
+                    if (workflows.length > 0) {
+                      tutorialFound = true;
+                    }
+                  }
 
-									if (data.tutorial === "configure_organization") {
-										if (userdata.active_org.name !== userdata.username) {
-											tutorialFound = true
-										}
-									}
-								}
-							}
-								
-							return (
-								<div key={index} style={{display: "flex", marginBottom: index === steps.length-1 ? 0 : 20, }}>
-									<div style={{maxWidth: 50, marginRight: 25, }}>
-										<Typography variant="h6">
-											{tutorialFound ? 
-												<CheckIcon style={{color: "green", paddingTop: 5,}} />
-												:
-												<b>{index+1}</b>
-											}
-										</Typography>
-									</div>
-									<div style={{}}>
-										{data.html}
-									</div>
-								</div>
-							)
-						})}
-					</Paper>
-					<div style={{textAlign: "left", display: "flex", marginTop: 25, width: "100%",}}>
-						<div style={{flex: 1, padding: 10, marginRight: 10,}}>
-							<Typography>
-								<b>Invite your team</b>
-							</Typography>
-							<Typography color="textSecondary" variant="body2" style={{marginTop: 5,}} >
-								Get teammates, managers and customers involved.
-							</Typography>
-							<Link to="/admin?tab=users" style={{textDecoration: "none",}}>
-								<Button
-									variant="outlined"
-									style={{marginTop: 10}}
-									onClick={() => {
-									}}
-								>
-									Invite Users
-								</Button>
-							</Link>
-						</div>
-						<div style={{flex: 1, padding: 10, }}>
-							<Typography>
-								<b>Need help?</b>
-							</Typography>
-							<Typography color="textSecondary" variant="body2" style={{marginTop: 5,}} >
-								We help with automation, scaling, training and more. Get involved!
-							</Typography>
-							<a href="https://discord.gg/B2CBzUm" style={{textDecoration: "none",}}>
-								<Button
-									variant="outlined"
-									style={{marginTop: 10}}
-									onClick={() => {
-									}}
-								>
-									Join Discord community
-								</Button>
-							</a>
-						</div>
-						{/*
+                  if (data.tutorial === "configure_organization") {
+                    if (userdata.active_org.name !== userdata.username) {
+                      tutorialFound = true;
+                    }
+                  }
+                }
+              }
+
+              return (
+                <div
+                  key={index}
+                  style={{
+                    display: "flex",
+                    marginBottom: index === steps.length - 1 ? 0 : 20,
+                  }}
+                >
+                  <div style={{ maxWidth: 50, marginRight: 25 }}>
+                    <Typography variant="h6">
+                      {tutorialFound ? (
+                        <CheckIcon style={{ color: "green", paddingTop: 5 }} />
+                      ) : (
+                        <b>{index + 1}</b>
+                      )}
+                    </Typography>
+                  </div>
+                  <div style={{}}>{data.html}</div>
+                </div>
+              );
+            })}
+          </Paper>
+          <div
+            style={{
+              textAlign: "left",
+              display: "flex",
+              marginTop: 25,
+              width: "100%",
+            }}
+          >
+            <div style={{ flex: 1, padding: 10, marginRight: 10 }}>
+              <Typography>
+                <b>Invite your team</b>
+              </Typography>
+              <Typography
+                color="textSecondary"
+                variant="body2"
+                style={{ marginTop: 5 }}
+              >
+                Get teammates, managers and customers involved.
+              </Typography>
+              <Link to="/admin?tab=users" style={{ textDecoration: "none" }}>
+                <Button
+                  variant="outlined"
+                  style={{ marginTop: 10 }}
+                  onClick={() => {}}
+                >
+                  Invite Users
+                </Button>
+              </Link>
+            </div>
+            <div style={{ flex: 1, padding: 10 }}>
+              <Typography>
+                <b>Need help?</b>
+              </Typography>
+              <Typography
+                color="textSecondary"
+                variant="body2"
+                style={{ marginTop: 5 }}
+              >
+                We help with automation, scaling, training and more. Get
+                involved!
+              </Typography>
+              <a
+                href="https://discord.gg/B2CBzUm"
+                style={{ textDecoration: "none" }}
+              >
+                <Button
+                  variant="outlined"
+                  style={{ marginTop: 10 }}
+                  onClick={() => {}}
+                >
+                  Join Discord community
+                </Button>
+              </a>
+            </div>
+            {/*
 						<div style={{position: "fixed", bottom: 110, right: 110, display: "flex", }}>
 							<Typography variant="body1" color="textSecondary" style={{marginRight: 0, maxWidth: 150, }}>
 								Need assistance? Ask our support team (it's free!).
@@ -2371,7 +2473,7 @@ const GettingStarted = (props) => {
 							<img src="/images/Arrow.png" style={{width: 150}} />
 						</div>
 						*/}
-					</div>
+          </div>
           {/*
 					<div style={flexContainerStyle}>
 						<div style={{...flexBoxStyle, ...activeWorkflowStyle}}>
@@ -2419,7 +2521,7 @@ const GettingStarted = (props) => {
 						)
 					}}
 					*/}
-					{/*
+          {/*
           <div style={{ display: "flex", margin: "0px 0px 20px 0px" }}>
             <div style={{ flex: 1 }}>
               <Typography style={{ marginTop: 7, marginBottom: "auto" }}>
@@ -2771,7 +2873,7 @@ const GettingStarted = (props) => {
   const loadedCheck =
     isLoaded && isLoggedIn && workflowDone ? (
       <div>
-				{/*
+        {/*
 				<ShepherdTour steps={newSteps} tourOptions={tourOptions}>
 					<TourButton />
 				</ShepherdTour>

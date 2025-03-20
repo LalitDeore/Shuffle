@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/api/types/image"
 
 	//gyaml "github.com/ghodss/yaml"
 
@@ -614,7 +614,7 @@ func handleGetStreamResults(resp http.ResponseWriter, request *http.Request) {
 			return
 		}
 
-		if len(workflowExecution.ExecutionOrg) > 0 && user.ActiveOrg.Id == workflowExecution.ExecutionOrg && user.Role == "admin" {
+		if len(workflowExecution.ExecutionOrg) > 0 && user.ActiveOrg.Id == workflowExecution.ExecutionOrg {
 			//log.Printf("[DEBUG] User %s is in correct org. Allowing org continuation for execution!", user.Username)
 		} else {
 			log.Printf("[WARNING] Bad authorization key when getting stream results %s.", actionResult.ExecutionId)
@@ -965,7 +965,7 @@ func deleteWorkflow(resp http.ResponseWriter, request *http.Request) {
 	}
 
 	if user.Id != workflow.Owner || len(user.Id) == 0 {
-		if workflow.OrgId == user.ActiveOrg.Id && user.Role == "admin" {
+		if workflow.OrgId == user.ActiveOrg.Id  {
 			log.Printf("[INFO] User %s is deleting workflow %s as admin. Owner: %s", user.Username, workflow.ID, workflow.Owner)
 		} else {
 			log.Printf("[WARNING] Wrong user (%s) for workflow %s (delete workflow)", user.Username, workflow.ID)
@@ -1032,10 +1032,14 @@ func deleteWorkflow(resp http.ResponseWriter, request *http.Request) {
 
 	log.Printf("[INFO] Should have deleted workflow %s (%s)", workflow.Name, fileId)
 
-	cacheKey := fmt.Sprintf("%s_workflows", user.Id)
-	shuffle.DeleteCache(ctx, cacheKey)
+	shuffle.DeleteCache(ctx, fmt.Sprintf("%s_workflows", user.Id))
 	shuffle.DeleteCache(ctx, fmt.Sprintf("%s_workflows", user.ActiveOrg.Id))
+	shuffle.DeleteCache(ctx, fmt.Sprintf("%s_%s", user.Username, fileId))
 	log.Printf("[DEBUG] Cleared workflow cache for %s (%s)", user.Username, user.Id)
+	shuffle.DeleteCache(ctx, fmt.Sprintf("workflow_%s_childworkflows", workflow.ID))
+	if len(workflow.ParentWorkflowId) > 0 {
+		shuffle.DeleteCache(ctx, fmt.Sprintf("workflow_%s_childworkflows", workflow.ParentWorkflowId))
+	}
 
 	resp.WriteHeader(200)
 	resp.Write([]byte(`{"success": true}`))
@@ -1094,10 +1098,12 @@ func handleExecution(id string, workflow shuffle.Workflow, request *http.Request
 		workflow.Errors = []string{}
 	}
 
+	/*
 	if !workflow.IsValid {
 		log.Printf("[ERROR] Stopped execution as workflow %s is not valid.", workflow.ID)
 		return shuffle.WorkflowExecution{}, fmt.Sprintf(`workflow %s is invalid`, workflow.ID), errors.New("Failed getting workflow")
 	}
+	*/
 
 	maxExecutionDepth := 10
 	if os.Getenv("SHUFFLE_MAX_EXECUTION_DEPTH") != "" {
@@ -1743,15 +1749,6 @@ func handleExecution(id string, workflow shuffle.Workflow, request *http.Request
 				Environments:  execInfo.Environments,
 			}
 
-			//executionRequestWrapper, err := getWorkflowQueue(ctx, environment)
-			//if err != nil {
-			//	executionRequestWrapper = ExecutionRequestWrapper{
-			//		Data: []ExecutionRequest{executionRequest},
-			//	}
-			//} else {
-			//	executionRequestWrapper.Data = append(executionRequestWrapper.Data, executionRequest)
-			//}
-
 			//log.Printf("Execution request: %#v", executionRequest)
 			executionRequest.Priority = workflowExecution.Priority
 			err = shuffle.SetWorkflowQueue(ctx, executionRequest, environment)
@@ -1939,7 +1936,7 @@ func executeWorkflow(resp http.ResponseWriter, request *http.Request) {
 
 	if !executionAuthValid {
 		if user.Id != workflow.Owner && user.Role != "scheduler" && user.Role != fmt.Sprintf("workflow_%s", fileId) {
-			if workflow.OrgId == user.ActiveOrg.Id && user.Role == "admin" {
+			if workflow.OrgId == user.ActiveOrg.Id {
 				log.Printf("[AUDIT] Letting user %s execute %s because they're admin of the same org", user.Username, workflow.ID)
 			} else {
 				log.Printf("[AUDIT] Wrong user (%s) for workflow %s (execute)", user.Username, workflow.ID)
@@ -2029,7 +2026,7 @@ func stopSchedule(resp http.ResponseWriter, request *http.Request) {
 	}
 
 	if user.Id != workflow.Owner || len(user.Id) == 0 {
-		if workflow.OrgId == user.ActiveOrg.Id && user.Role == "admin" {
+		if workflow.OrgId == user.ActiveOrg.Id  {
 			log.Printf("[AUDIT] User %s is accessing workflow %s as admin (stop schedule)", user.Username, workflow.ID)
 		} else {
 			log.Printf("[WARNING] Wrong user (%s) for workflow %s (stop schedule)", user.Username, workflow.ID)
@@ -2038,19 +2035,6 @@ func stopSchedule(resp http.ResponseWriter, request *http.Request) {
 			return
 		}
 	}
-
-	//if user.Id != workflow.Owner || len(user.Id) == 0 {
-	//	if workflow.OrgId == user.ActiveOrg.Id && user.Role == "admin" {
-	//		log.Printf("[INFO] User %s is accessing workflow %s as admin", user.Username, workflow.ID)
-	//	} else if workflow.Public {
-	//		log.Printf("[INFO] Letting user %s access workflow %s because it's public", user.Username, workflow.ID)
-	//	} else {
-	//		log.Printf("[WARNING] Wrong user (%s) for workflow %s (get workflow)", user.Username, workflow.ID)
-	//		resp.WriteHeader(401)
-	//		resp.Write([]byte(`{"success": false}`))
-	//		return
-	//	}
-	//}
 
 	schedule, err := shuffle.GetSchedule(ctx, scheduleId)
 	if err != nil {
@@ -2279,7 +2263,7 @@ func scheduleWorkflow(resp http.ResponseWriter, request *http.Request) {
 	}
 
 	if user.Id != workflow.Owner || len(user.Id) == 0 {
-		if workflow.OrgId == user.ActiveOrg.Id && user.Role == "admin" {
+		if workflow.OrgId == user.ActiveOrg.Id  {
 			log.Printf("[INFO] User %s is deleting workflow %s as admin. Owner: %s", user.Username, workflow.ID, workflow.Owner)
 		} else {
 			log.Printf("[WARNING] Wrong user (%s) for workflow %s (schedule start). Owner: %s", user.Username, workflow.ID, workflow.Owner)
@@ -4094,12 +4078,12 @@ func LoadSpecificApps(resp http.ResponseWriter, request *http.Request) {
 
 				appSdk := os.Getenv("SHUFFLE_APP_SDK_VERSION")
 				if len(appSdk) == 0 {
-					_, err := dockercli.ImagePull(ctx, "frikky/shuffle:app_sdk", types.ImagePullOptions{})
+					_, err := dockercli.ImagePull(ctx, "frikky/shuffle:app_sdk", image.PullOptions{})
 					if err != nil {
 						log.Printf("[WARNING] Failed to download new App SDK: %s", err)
 					}
 				} else {
-					_, err := dockercli.ImagePull(ctx, fmt.Sprintf("%s/%s/shuffle-app_sdk:%s", "ghcr.io", "frikky", appSdk), types.ImagePullOptions{})
+					_, err := dockercli.ImagePull(ctx, fmt.Sprintf("%s/%s/shuffle-app_sdk:%s", "ghcr.io", "frikky", appSdk), image.PullOptions{})
 					if err != nil {
 						log.Printf("[WARNING] Failed to download new App SDK %s: %s", err)
 					}

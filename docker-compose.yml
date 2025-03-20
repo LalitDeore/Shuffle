@@ -54,13 +54,14 @@ services:
       - SHUFFLE_PASS_APP_PROXY=${SHUFFLE_PASS_APP_PROXY}
       - SHUFFLE_STATS_DISABLED=true
       - SHUFFLE_LOGS_DISABLED=true
+      - SHUFFLE_SWARM_CONFIG=run
       - SHUFFLE_WORKER_IMAGE=ghcr.io/shuffle/shuffle-worker:latest
     env_file: .env
     restart: unless-stopped
     security_opt:
       - seccomp:unconfined
   opensearch:
-    image: opensearchproject/opensearch:2.14.0
+    image: opensearchproject/opensearch:2.19.1
     hostname: shuffle-opensearch
     container_name: shuffle-opensearch
     environment:
